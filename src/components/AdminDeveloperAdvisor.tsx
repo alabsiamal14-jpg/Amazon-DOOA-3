@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { auth } from '../lib/firebase.ts';
+import { getAdminToken } from '../lib/storage.ts';
 
 interface Message {
   id: string;
@@ -147,7 +148,7 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
         const reader = new FileReader();
         reader.onload = async (event) => {
           const base64 = event.target?.result as string;
-          const token = await auth.currentUser?.getIdToken();
+          const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
           const res = await fetch('/api/ai/analyze-project-zip', {
             method: 'POST',
             headers: {
@@ -269,7 +270,7 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
+          'Authorization': `Bearer ${(await auth.currentUser?.getIdToken()) || getAdminToken()}`
         },
         body: JSON.stringify({
           message: query,

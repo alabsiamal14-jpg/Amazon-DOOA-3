@@ -140,6 +140,41 @@ export const CustomerOrderTrackingPage: React.FC<CustomerOrderTrackingPageProps>
         }
       }
 
+      // 3. If still no match and both order number and phone are provided, query secure backend API
+      if (matches.length === 0 && num && phone) {
+        try {
+          const apiRes = await fetch(
+            `/api/db/orders/${encodeURIComponent(num)}?phone=${encodeURIComponent(phone)}`
+          );
+          if (apiRes.ok) {
+            const o = await apiRes.json();
+            if (o && o.orderNumber) {
+              matches = [
+                {
+                  id: String(o.id || o.orderNumber),
+                  order_number: o.orderNumber,
+                  customer_name: o.customerName || 'عميل',
+                  customer_phone: phone,
+                  city: o.city || '',
+                  address: o.shippingAddress || '',
+                  items: Array.isArray(o.items) ? o.items : [],
+                  subtotal: Number(o.totalAmount || 0),
+                  discount_amount: 0,
+                  delivery_fee: 0,
+                  total_amount: Number(o.totalAmount || 0),
+                  status: (o.status || 'pending') as OrderStatus,
+                  whatsapp_sent: Boolean(o.whatsappSent),
+                  driver_name: o.driverName,
+                  created_at: o.createdAt || new Date().toISOString(),
+                },
+              ];
+            }
+          }
+        } catch (apiErr) {
+          console.warn('Secure backend order tracking fallback error:', apiErr);
+        }
+      }
+
       setFoundOrders(matches);
 
       if (matches.length > 0) {

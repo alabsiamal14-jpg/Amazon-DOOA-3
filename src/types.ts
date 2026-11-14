@@ -64,7 +64,6 @@ export interface StoreSettings {
   deliveryFee: number;
   freeDeliveryThreshold: number;
   welcomeMessage: string;
-  adminPassword?: string;
 }
 
 export interface CustomerOrderInfo {
@@ -145,6 +144,7 @@ export interface AdminUser {
   username: string;
   displayName: string;
   role: 'superadmin' | 'manager' | 'editor';
+  token?: string;
 }
 
 export interface AIAnalysisResult {

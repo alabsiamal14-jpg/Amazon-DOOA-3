@@ -22,6 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { db, auth } from '../lib/firebase';
+import { getAdminToken } from '../lib/storage';
 import { collection, getDocs, getDoc, addDoc, doc, setDoc, query, orderBy, onSnapshot, where, updateDoc, arrayUnion, runTransaction } from 'firebase/firestore';
 
 export interface SupplierItem {
@@ -450,7 +451,7 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
 
     const combinedExtracted: ExtractedProductItem[] = [];
     const currentUser = auth.currentUser;
-    const idToken = currentUser ? await currentUser.getIdToken() : '';
+    const idToken = (currentUser ? await currentUser.getIdToken() : '') || getAdminToken() || '';
 
     const formatProduct = (p: any, source: string) => {
         const name = (p.name && p.name !== 'Unknown') 

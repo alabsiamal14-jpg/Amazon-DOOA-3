@@ -3,7 +3,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
-import { requireAuth, AuthRequest } from '../../../middleware/auth.ts';
+import { requireAdmin, AuthRequest } from '../../../middleware/auth.ts';
 
 const router = Router();
 
@@ -39,7 +39,7 @@ const upload = multer({
 const uploadMiddleware = upload.single('video');
 
 // Endpoint: POST /api/whatsapp-supplier-ai/analyze and POST /api/whatsapp-supplier-ai
-router.post(['/analyze', '/'], requireAuth, (req: AuthRequest, res: Response, next) => {
+router.post(['/analyze', '/'], requireAdmin, (req: AuthRequest, res: Response, next) => {
   uploadMiddleware(req as any, res, (err) => {
     if (err) {
       console.warn('[Supplier AI] Upload error:', err.message);

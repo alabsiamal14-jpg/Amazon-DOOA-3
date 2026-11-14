@@ -18,6 +18,7 @@ import {
   CheckSquare,
 } from 'lucide-react';
 import { auth } from '../lib/firebase.ts';
+import { getAdminToken } from '../lib/storage.ts';
 import { SupplierImportResult } from '../features/whatsapp-supplier-ai/types/index.ts';
 
 export const WhatsAppSupplierDashboard: React.FC = () => {
@@ -111,7 +112,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     }, 1500);
 
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
       if (!token) {
         throw new Error('يرجى تسجيل الدخول كمسؤول للنظام للتمكن من معالجة البيانات.');
       }
@@ -203,7 +204,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
       if (!token) {
         throw new Error('يرجى تسجيل الدخول أولاً كمسؤول.');
       }

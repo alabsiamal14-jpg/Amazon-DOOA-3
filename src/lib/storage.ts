@@ -61,18 +61,19 @@ export function saveStoredProducts(products: Product[]): void {
 export function getStoredSettings(): StoreSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...INITIAL_SETTINGS, adminPassword: 'admin' };
+    if (!raw) return INITIAL_SETTINGS;
     const parsed = JSON.parse(raw);
+    delete parsed.adminPassword; // Purge legacy plaintext password
     if (parsed.whatsappNumber === '966500000000' || parsed.storeName?.includes('إيلين')) {
       parsed.whatsappNumber = INITIAL_SETTINGS.whatsappNumber;
       parsed.storeName = INITIAL_SETTINGS.storeName;
       parsed.tagline = INITIAL_SETTINGS.tagline;
       localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...INITIAL_SETTINGS, ...parsed }));
     }
-    return { ...INITIAL_SETTINGS, adminPassword: 'admin', ...parsed };
+    return { ...INITIAL_SETTINGS, ...parsed };
   } catch (e) {
     console.error('Error loading settings from storage:', e);
-    return { ...INITIAL_SETTINGS, adminPassword: 'admin' };
+    return INITIAL_SETTINGS;
   }
 }
 
@@ -122,19 +123,36 @@ export function saveStoredOrders(orders: Order[]): void {
   }
 }
 
+const ADMIN_TOKEN_KEY = 'amazon_duaa_admin_token_v1';
+
+export function getAdminToken(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function getAdminSession(): AdminUser | null {
   try {
     const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
+    const token = getAdminToken();
+    if (!raw || !token) return null;
+    const parsed = JSON.parse(raw);
+    parsed.token = token;
+    return parsed;
   } catch (e) {
     return null;
   }
 }
 
-export function setAdminSession(user: AdminUser): void {
+export function setAdminSession(user: AdminUser, token?: string): void {
   try {
+    const sessionToken = token || user.token;
     localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(user));
+    if (sessionToken) {
+      localStorage.setItem(ADMIN_TOKEN_KEY, sessionToken);
+    }
   } catch (e) {
     console.error('Error setting admin session:', e);
   }
@@ -143,9 +161,18 @@ export function setAdminSession(user: AdminUser): void {
 export function clearAdminSession(): void {
   try {
     localStorage.removeItem(ADMIN_SESSION_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
   } catch (e) {
     console.error('Error clearing admin session:', e);
   }
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const token = getAdminToken();
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
 }
 
 export function resetToDefaults(): void {

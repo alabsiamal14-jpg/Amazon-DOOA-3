@@ -27,6 +27,7 @@ import {
   Info
 } from 'lucide-react';
 import { Category, Product, StoreSettings } from '../types';
+import { getAuthHeaders } from '../lib/storage';
 
 export interface VideoBatchItem {
   id: string;
@@ -221,7 +222,7 @@ export const AIVideoStudio: React.FC<AIVideoStudioProps> = ({
         try {
           const res = await fetch('/api/generate-product-content', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({
               imageBase64: bestPoster,
               mimeType: 'image/jpeg',

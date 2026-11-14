@@ -1,10 +1,19 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { Request, Response } from 'express';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { requireAuth, AuthRequest } from './src/middleware/auth.ts';
-import { getOrCreateUser } from './src/db/users.ts';
+import {
+  requireAuth,
+  requireAdmin,
+  requireStaffOrAdmin,
+  requireDriverOrStaffOrAdmin,
+  createAdminToken,
+  verifyAdminToken,
+  AuthRequest,
+} from './src/middleware/auth.ts';
+import { getOrCreateUser, getUserByUid } from './src/db/users.ts';
 import { getAllProducts, upsertProduct, deleteProductFromDb, updateProductStockInDb } from './src/db/products.ts';
 import { getAllOrders, getOrderByNumber, createOrderInDb, updateOrderStatusInDb, assignDriverInDb, updateDeliveryStatusInDb } from './src/db/orders.ts';
 import { getReviewsForProduct, createReviewInDb } from './src/db/reviews.ts';
@@ -16,7 +25,7 @@ import supplierAnalyzeRouter from './src/server/routes/whatsapp-supplier-ai/anal
 import supplierReviewRouter from './src/server/routes/whatsapp-supplier-ai/review.ts';
 import pricingRouter from './src/server/routes/pricing-ai/pricing.ts';
 import exportRouter from './src/server/routes/pricing-ai/export.ts';
-import { adminDb } from './src/lib/firebase-admin.ts';
+import { adminAuth, adminDb } from './src/lib/firebase-admin.ts';
 import firebaseConfig from './firebase-applet-config.json';
 import { triggerOrderConfirmation } from './src/lib/notifications.ts';
 import * as supplierRag from './src/features/whatsapp-supplier-ai/services/rag.ts';
@@ -45,8 +54,128 @@ const HOST = getCliArg('--host') || '0.0.0.0';
 
 app.use(express.json({ limit: '25mb' }));
 
-// Internal Health Check
-app.get('/api/admin/firebase-health', async (req, res) => {
+// =========================================================================
+// Rate Limiting & Brute-force Protection for Admin Login
+// =========================================================================
+interface LoginAttempt {
+  count: number;
+  lockedUntil: number | null;
+}
+const loginAttempts = new Map<string, LoginAttempt>();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes lockout
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
+}
+
+function timingSafeEqualStrings(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Admin Login Endpoint with Timing-Safe verification, Brute Force Protection, and HMAC Token
+app.post('/api/admin/login', (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان' });
+    }
+
+    const ip = getClientIp(req);
+    const attemptKey = `${ip}:${String(username).trim().toLowerCase()}`;
+    const attempt = loginAttempts.get(attemptKey) || { count: 0, lockedUntil: null };
+
+    // Check if currently locked out
+    if (attempt.lockedUntil && Date.now() < attempt.lockedUntil) {
+      const remainingMinutes = Math.ceil((attempt.lockedUntil - Date.now()) / 60000);
+      return res.status(429).json({
+        error: `تم تجميد محاولات الدخول مؤقتاً لحماية الحساب. يرجى الانتظار ${remainingMinutes} دقيقة قبل المحاولة مرة أخرى.`,
+      });
+    }
+
+    const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
+    const expectedPassword = process.env.ADMIN_PASSWORD || 'admin';
+
+    const isUserValid = timingSafeEqualStrings(String(username).trim(), expectedUsername);
+    const isPassValid = timingSafeEqualStrings(String(password), expectedPassword);
+
+    if (isUserValid && isPassValid) {
+      loginAttempts.delete(attemptKey);
+      const token = createAdminToken(String(username).trim());
+      return res.json({
+        success: true,
+        token,
+        user: {
+          id: 'admin-super-1',
+          username: String(username).trim(),
+          displayName: 'مدير المتجر',
+          role: 'superadmin',
+          email: 'omralabis@gmail.com',
+        },
+      });
+    }
+
+    // Record failed attempt
+    attempt.count += 1;
+    if (attempt.count >= MAX_LOGIN_ATTEMPTS) {
+      attempt.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+      loginAttempts.set(attemptKey, attempt);
+      return res.status(429).json({
+        error: 'تم تجميد محاولات الدخول لمدة 15 دقيقة بعد 5 محاولات خاطئة متتالية.',
+      });
+    }
+
+    loginAttempts.set(attemptKey, attempt);
+    return res.status(401).json({
+      error: `اسم المستخدم أو كلمة المرور غير صحيحة (المحاولة ${attempt.count} من ${MAX_LOGIN_ATTEMPTS})`,
+    });
+  } catch (err: any) {
+    console.error('Admin login error:', err);
+    return res.status(500).json({ error: 'حدث خطأ في معالجة تسجيل الدخول' });
+  }
+});
+
+// Admin Session Verification Endpoint
+app.get('/api/admin/verify', requireAuth, (req: AuthRequest, res: Response) => {
+  if (req.user?.role === 'admin' || req.user?.email?.toLowerCase() === 'omralabis@gmail.com') {
+    return res.json({
+      ok: true,
+      user: {
+        id: req.user.uid,
+        username: req.user.username || 'admin',
+        displayName: req.user.displayName || 'مدير المتجر',
+        role: 'superadmin',
+        email: req.user.email || 'omralabis@gmail.com',
+      },
+    });
+  }
+  if (req.user?.role === 'staff') {
+    return res.json({
+      ok: true,
+      user: {
+        id: req.user.uid,
+        username: req.user.username || 'staff',
+        displayName: req.user.displayName || 'موظف المتجر',
+        role: 'staff',
+        email: req.user.email,
+      },
+    });
+  }
+  return res.status(403).json({ error: 'Forbidden: Insufficient privileges' });
+});
+
+// Internal Health Check (Admin only)
+app.get('/api/admin/firebase-health', requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const collections = await adminDb.listCollections();
     res.json({
@@ -81,7 +210,7 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-app.patch('/api/db/users/:email/role', requireAuth, async (req: AuthRequest, res) => {
+app.patch('/api/db/users/:email/role', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { email } = req.params;
     const { role } = req.body;
@@ -123,7 +252,7 @@ app.get('/api/db/products', async (req, res) => {
   }
 });
 
-app.post('/api/db/products', async (req, res) => {
+app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const productData = req.body;
     console.log('[DEBUG] Saving product:', productData);
@@ -140,7 +269,7 @@ app.post('/api/db/products', async (req, res) => {
   }
 });
 
-app.patch('/api/db/products/:productId/status', requireAuth, async (req: AuthRequest, res) => {
+app.patch('/api/db/products/:productId/status', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { productId } = req.params;
     const { status } = req.body;
@@ -148,7 +277,6 @@ app.patch('/api/db/products/:productId/status', requireAuth, async (req: AuthReq
       return res.status(400).json({ error: 'Invalid status' });
     }
     
-    // In a real production app, check req.user.role here
     const prod = await getAllProducts().then(list => list.find(p => p.productId === productId));
     if (!prod) return res.status(404).json({ error: 'Product not found' });
     
@@ -172,7 +300,7 @@ app.patch('/api/db/products/:productId/status', requireAuth, async (req: AuthReq
   }
 });
 
-app.delete('/api/db/products/:productId', async (req, res) => {
+app.delete('/api/db/products/:productId', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { productId } = req.params;
     const deleted = await deleteProductFromDb(productId);
@@ -184,7 +312,7 @@ app.delete('/api/db/products/:productId', async (req, res) => {
 });
 
 
-app.post('/api/db/products/deduplicate', async (req, res) => {
+app.post('/api/db/products/deduplicate', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const customGroups: Array<{ masterId: string; newStock: number; deleteIds: string[] }> | null =
       Array.isArray(req.body?.groups) ? req.body.groups : (Array.isArray(req.body) ? req.body : null);
@@ -285,32 +413,142 @@ app.post('/api/db/products/deduplicate', async (req, res) => {
   }
 });
 
-// Cloud SQL Orders API
-app.get('/api/db/orders', async (req, res) => {
+// Cloud SQL Orders API - Protected: Admin/Staff see all, Drivers see delivery, Customers see only their own
+app.get('/api/db/orders', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const ordersList = await getAllOrders();
-    return res.json(ordersList);
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+    }
+
+    // 1. Admin or Staff (and sovereign owner omralabis@gmail.com): full access to store orders
+    if (user.role === 'admin' || user.role === 'staff' || user.email?.toLowerCase() === 'omralabis@gmail.com') {
+      return res.json(ordersList);
+    }
+
+    // 2. Delivery Drivers: view orders assigned to them or active delivery
+    if (user.role === 'driver') {
+      const driverOrders = ordersList.filter((o: any) =>
+        o.driverId === user.uid ||
+        (user.phone && o.driverPhone === user.phone) ||
+        ['ready_for_shipping', 'shipped', 'out_for_delivery', 'delivered'].includes(o.status)
+      );
+      return res.json(driverOrders);
+    }
+
+    // 3. Regular Customers: view only orders matching their email
+    const customerOrders = ordersList.filter((o: any) =>
+      (user.email && o.customerEmail?.toLowerCase() === user.email.toLowerCase())
+    );
+    return res.json(customerOrders);
   } catch (error: any) {
     console.error('Failed to fetch orders from Cloud SQL:', error);
     return res.status(500).json({ error: error.message || 'Failed to fetch orders' });
   }
 });
 
-app.get('/api/db/orders/:orderNumber', async (req, res) => {
+// Single Order Detail - Protected: Admin/Staff full, Driver assigned, Customer owned, or Guest with phone verification
+app.get('/api/db/orders/:orderNumber', async (req: Request, res: Response) => {
   try {
     const { orderNumber } = req.params;
+    const phoneQuery = (req.query.phone as string)?.trim();
+
+    // Check authorization header if present
+    const authHeader = req.headers.authorization;
+    let authUser: any = null;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.split('Bearer ')[1]?.trim();
+      authUser = verifyAdminToken(token);
+      if (!authUser && token && token !== 'undefined') {
+        try {
+          const decoded = await adminAuth.verifyIdToken(token);
+          let role = decoded.email?.toLowerCase() === 'omralabis@gmail.com' ? 'admin' : 'customer';
+          if (role !== 'admin') {
+            const dbUser = await getUserByUid(decoded.uid);
+            if (dbUser && (dbUser.role === 'admin' || dbUser.role === 'staff' || dbUser.role === 'driver')) {
+              role = dbUser.role;
+            }
+          }
+          authUser = {
+            uid: decoded.uid,
+            email: decoded.email,
+            role,
+          };
+        } catch {
+          // Token verification failed
+        }
+      }
+    }
+
+    // Reject unauthenticated calls without phone verification BEFORE querying DB (anti-enumeration)
+    if (!authUser && !phoneQuery) {
+      return res.status(401).json({ error: 'يجب تسجيل الدخول أو إدخال رقم الهاتف المسجل لتتبع الطلب' });
+    }
+
     const order = await getOrderByNumber(orderNumber);
     if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
+      return res.status(404).json({ error: 'الطلب غير موجود' });
     }
-    return res.json(order);
+
+    // 1. Admin or Staff: full order access
+    if (authUser && (authUser.role === 'admin' || authUser.role === 'staff' || authUser.email?.toLowerCase() === 'omralabis@gmail.com')) {
+      return res.json(order);
+    }
+
+    // 2. Driver: access if assigned or delivery order
+    if (authUser && authUser.role === 'driver') {
+      if (order.driverId === authUser.uid || order.driverPhone === authUser.phone) {
+        return res.json(order);
+      }
+    }
+
+    // 3. Authenticated customer: access only their own order
+    if (authUser && authUser.role === 'customer') {
+      const isOwner = Boolean(
+        order.customerEmail &&
+        authUser.email &&
+        order.customerEmail.toLowerCase() === authUser.email.toLowerCase()
+      );
+      if (isOwner) {
+        return res.json(order);
+      }
+      return res.status(403).json({ error: 'غير مصرح: لا تملك صلاحية الوصول لهذا الطلب' });
+    }
+
+    // 4. Guest order tracking via phone verification (anti-enumeration & anti-leak)
+    if (phoneQuery) {
+      const normalize = (p: string) => p.replace(/\D/g, '');
+      const orderPhone = normalize(order.customerPhone || '');
+      const queryPhone = normalize(phoneQuery);
+      if (orderPhone && queryPhone && (orderPhone.endsWith(queryPhone) || queryPhone.endsWith(orderPhone))) {
+        // Return tracking details safely (sanitized)
+        return res.json({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customerName,
+          status: order.status,
+          items: order.items,
+          totalAmount: order.totalAmount,
+          createdAt: order.createdAt,
+          driverName: order.driverName,
+          shippingAddress: order.address,
+          city: order.city,
+        });
+      }
+      return res.status(403).json({ error: 'رقم الهاتف المدخل غير مطابق لهذا الطلب' });
+    }
+
+    // 5. Unauthenticated without phone verification: reject to prevent customer data leaks
+    return res.status(401).json({ error: 'يجب تسجيل الدخول أو إدخال رقم الهاتف المسجل لتتبع الطلب' });
   } catch (error: any) {
     console.error('Failed to fetch order from Cloud SQL:', error);
     return res.status(500).json({ error: error.message || 'Failed to fetch order' });
   }
 });
 
-app.post('/api/db/orders', async (req, res) => {
+app.post('/api/db/orders', requireStaffOrAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const orderData = req.body;
     if (!orderData || !orderData.order_number) {
@@ -351,7 +589,7 @@ app.post('/api/orders/checkout', async (req, res) => {
 });
 
 // Order Dual-Sync Observability & Health Status Endpoint
-app.get('/api/admin/orders/sync-status', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/admin/orders/sync-status', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const pgOrders = await getAllOrders();
     return res.json({
@@ -373,7 +611,7 @@ app.get('/api/admin/orders/sync-status', requireAuth, async (req: AuthRequest, r
 });
 
 // Transactional Outbox Observability & Recovery Status Endpoint
-app.get('/api/admin/orders/outbox-status', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/admin/orders/outbox-status', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const outboxEvents = await db.select().from(orderOutbox).limit(50);
     return res.json({
@@ -398,7 +636,7 @@ app.get('/api/admin/orders/outbox-status', requireAuth, async (req: AuthRequest,
   }
 });
 
-app.patch('/api/db/orders/:orderNumber/status', async (req, res) => {
+app.patch('/api/db/orders/:orderNumber/status', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { orderNumber } = req.params;
     const { status } = req.body;
@@ -413,7 +651,7 @@ app.patch('/api/db/orders/:orderNumber/status', async (req, res) => {
   }
 });
 
-app.patch('/api/db/orders/:orderNumber/driver', async (req, res) => {
+app.patch('/api/db/orders/:orderNumber/driver', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { orderNumber } = req.params;
     const driverName = req.body.driverName || req.body.driver_name;
@@ -431,7 +669,7 @@ app.patch('/api/db/orders/:orderNumber/driver', async (req, res) => {
   }
 });
 
-app.patch('/api/db/orders/:orderNumber/delivery', async (req, res) => {
+app.patch('/api/db/orders/:orderNumber/delivery', requireDriverOrStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { orderNumber } = req.params;
     const status = req.body.status;
@@ -565,8 +803,8 @@ function getDynamicSmartProductFallback(seedString: string) {
   return smartCatalog[positiveHash % smartCatalog.length];
 }
 
-// AI Product Content Generation using Gemini (with multi-model fallback)
-app.post('/api/generate-product-content', async (req, res) => {
+// AI Product Content Generation using Gemini (with multi-model fallback) - Staff/Admin only
+app.post('/api/generate-product-content', requireStaffOrAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { imageBase64, mimeType } = req.body;
 
@@ -676,8 +914,8 @@ app.post('/api/generate-product-content', async (req, res) => {
   }
 });
 
-// Amazon Duaa AI Product Analyzer endpoint
-app.post('/api/ai/product-analyze', async (req, res) => {
+// Amazon Duaa AI Product Analyzer endpoint - Staff/Admin only
+app.post('/api/ai/product-analyze', requireStaffOrAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { imageBase64, mimeType } = req.body;
     if (!imageBase64) {
@@ -745,8 +983,8 @@ app.post('/api/ai/product-analyze', async (req, res) => {
   }
 });
 
-// Amazon Duaa AI Admin Copilot endpoint
-app.post('/api/ai/copilot', async (req, res) => {
+// Amazon Duaa AI Admin Copilot endpoint - Staff/Admin only
+app.post('/api/ai/copilot', requireStaffOrAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { message, context } = req.body;
     if (!message || typeof message !== 'string') {
@@ -1027,8 +1265,8 @@ export const TrustBadgesBar: React.FC = () => {
 - أرسل لي كود إضافة حاسبة توفير عروض الباقات (Bundle Savings)`;
 }
 
-// Pricing AI Endpoints
-app.get('/api/pricing-ai/conversations', requireAuth, async (req: AuthRequest, res) => {
+// Pricing AI Endpoints - Staff/Admin only
+app.get('/api/pricing-ai/conversations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const snapshot = await adminDb.collection('pricing_ai_conversations').orderBy('updatedAt', 'desc').get();
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -1042,7 +1280,7 @@ app.get('/api/pricing-ai/conversations', requireAuth, async (req: AuthRequest, r
   }
 });
 
-app.post('/api/pricing-ai/conversations', requireAuth, async (req: AuthRequest, res) => {
+app.post('/api/pricing-ai/conversations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { title } = req.body;
     const newConv = { title: title || 'جلسة جديدة', updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
@@ -1054,7 +1292,7 @@ app.post('/api/pricing-ai/conversations', requireAuth, async (req: AuthRequest, 
   }
 });
 
-app.get('/api/pricing-ai/conversations/:id/messages', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/pricing-ai/conversations/:id/messages', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const snapshot = await adminDb.collection('pricing_ai_messages').where('conversationId', '==', id).orderBy('createdAt', 'asc').get();
@@ -1072,7 +1310,7 @@ app.get('/api/pricing-ai/conversations/:id/messages', requireAuth, async (req: A
   }
 });
 
-app.post('/api/pricing-ai/conversations/:id/messages', requireAuth, async (req: AuthRequest, res) => {
+app.post('/api/pricing-ai/conversations/:id/messages', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { message, attachment } = req.body;
@@ -1104,7 +1342,7 @@ app.post('/api/pricing-ai/conversations/:id/messages', requireAuth, async (req: 
   }
 });
 
-app.get('/api/pricing-ai/suppliers', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/pricing-ai/suppliers', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const snapshot = await adminDb.collection('supplier_ai_suppliers').get();
     const suppliers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -1122,7 +1360,7 @@ app.get('/api/pricing-ai/suppliers', requireAuth, async (req: AuthRequest, res) 
   }
 });
 
-app.post('/api/pricing-ai/suppliers', requireAuth, async (req: AuthRequest, res) => {
+app.post('/api/pricing-ai/suppliers', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const data = req.body;
     let newId = 'sup-' + Date.now();
@@ -1138,7 +1376,7 @@ app.post('/api/pricing-ai/suppliers', requireAuth, async (req: AuthRequest, res)
   }
 });
 
-app.get('/api/pricing-ai/suppliers/:id/prices', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/pricing-ai/suppliers/:id/prices', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const snapshot = await adminDb.collection('supplier_ai_price_observations').where('supplierId', '==', id).get();
@@ -1149,7 +1387,7 @@ app.get('/api/pricing-ai/suppliers/:id/prices', requireAuth, async (req: AuthReq
   }
 });
 
-app.get('/api/pricing-ai/prices/observations', requireAuth, async (req: AuthRequest, res) => {
+app.get('/api/pricing-ai/prices/observations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
     const snapshot = await adminDb.collection('supplier_ai_price_observations').get();
     const obs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -1169,12 +1407,8 @@ app.get('/api/pricing-ai/prices/observations', requireAuth, async (req: AuthRequ
 // Admin Auth Check
 const isAdmin = (email?: string) => email === 'omralabis@gmail.com';
 
-app.post('/api/ai/analyze-project-zip', requireAuth, async (req: AuthRequest, res) => {
+app.post('/api/ai/analyze-project-zip', requireAdmin, async (req: AuthRequest, res) => {
   try {
-    if (!req.user || !isAdmin(req.user.email)) {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
-    }
-
     const { fileData, fileName } = req.body;
     if (!fileData) {
       return res.status(400).json({ error: 'لم يتم العثور على الملف المضغوط' });
@@ -1191,16 +1425,11 @@ app.post('/api/ai/analyze-project-zip', requireAuth, async (req: AuthRequest, re
   }
 });
 
-app.post('/api/ai/developer-advisor', requireAuth, async (req: AuthRequest, res) => {
+app.post('/api/ai/developer-advisor', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { message, history, context, file, uploadedProjectFiles } = req.body;
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'الرسالة مطلوبة' });
-    }
-
-    // Strict Admin check
-    if (!req.user || !isAdmin(req.user.email)) {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;

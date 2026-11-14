@@ -16,6 +16,7 @@ import {
   saveStoredWishlist,
   getAdminSession,
   clearAdminSession,
+  getAuthHeaders,
   resetToDefaults,
 } from './lib/storage';
 import {
@@ -107,6 +108,32 @@ export default function App() {
   useEffect(() => {
     guestCartRef.current = cart;
   }, [cart]);
+
+  // Server-side verification of admin session and HMAC token on mount
+  useEffect(() => {
+    const verifyAdmin = async () => {
+      const session = getAdminSession();
+      if (!session || !session.token) {
+        if (adminUser) {
+          clearAdminSession();
+          setAdminUser(null);
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/admin/verify', {
+          headers: getAuthHeaders(),
+        });
+        if (!res.ok) {
+          clearAdminSession();
+          setAdminUser(null);
+        }
+      } catch {
+        // Network resilience: do not immediately clear on transient network glitch
+      }
+    };
+    verifyAdmin();
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'store' | 'product-detail' | 'checkout' | 'orders' | 'admin' | 'dev-advisor' | 'track-order' | 'branches' | 'driver'>('store');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -476,7 +503,7 @@ export default function App() {
     try {
       const response = await fetch('/api/db/products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(newProduct),
       });
       if (!response.ok) {
@@ -497,7 +524,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/db/products/${productId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ status: 'published' }),
       });
       
@@ -529,7 +556,7 @@ export default function App() {
       saveProductFirestore(p);
       fetch('/api/db/products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(p),
       }).catch(() => {});
     }
@@ -541,6 +568,14 @@ export default function App() {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
     await deleteProductCloud(productId);
     await deleteProductFirestore(productId);
+    try {
+      await fetch(`/api/db/products/${encodeURIComponent(productId)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+    } catch (err) {
+      console.warn('Backend product deletion notice:', err);
+    }
     showToast('تم حذف المنتج بنجاح', 'info');
   };
 
@@ -553,7 +588,7 @@ export default function App() {
           saveProductFirestore(updated);
           fetch('/api/db/products', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(updated),
           }).catch(() => {});
           return updated;
@@ -702,7 +737,7 @@ export default function App() {
       // 1. Post to backend Cloud SQL deduplicate endpoint
       await fetch('/api/db/products/deduplicate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ groups }),
       });
     } catch (err) {
@@ -775,7 +810,7 @@ export default function App() {
       try {
         await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/driver`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({
             driver_name: driver.driverName,
             driver_phone: driver.driverPhone,
@@ -834,7 +869,7 @@ export default function App() {
       try {
         await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/delivery`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({
             status,
             ...extraData,
@@ -885,7 +920,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/db/users/${email}/role`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ role }),
       });
       

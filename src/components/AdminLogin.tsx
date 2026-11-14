@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, KeyRound, Store, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Lock, KeyRound, Store, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import { AdminUser, StoreSettings } from '../types';
 import { setAdminSession } from '../lib/storage';
 
@@ -10,31 +10,52 @@ interface AdminLoginProps {
 }
 
 export const AdminLogin: React.FC<AdminLoginProps> = ({
-  settings,
   onLoginSuccess,
   onBackToStore,
 }) => {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    const targetPassword = settings.adminPassword || 'admin';
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+        }),
+      });
 
-    if (password === targetPassword) {
-      const user: AdminUser = {
-        id: 'admin-1',
-        username: username || 'admin',
-        displayName: 'مدير المتجر',
-        role: 'superadmin',
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || 'فشل تسجيل الدخول. تحقق من اسم المستخدم وكلمة المرور.');
+      }
+
+      if (!data.token || !data.user) {
+        throw new Error('استجابة غير صالحة من خادم المصادقة');
+      }
+
+      const adminUser: AdminUser = {
+        ...data.user,
+        token: data.token,
       };
-      setAdminSession(user);
-      onLoginSuccess(user);
-    } else {
-      setError('كلمة المرور غير صحيحة. (كلمة المرور الافتراضية هي: admin)');
+
+      setAdminSession(adminUser, data.token);
+      onLoginSuccess(adminUser);
+    } catch (err: any) {
+      setError(err.message || 'فشل الاتصال بخادم الأمان');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -47,7 +68,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
           </div>
           <h2 className="text-2xl font-black text-stone-900">تسجيل دخول لوحة الإدارة</h2>
           <p className="text-xs text-stone-500 mt-1">
-            منطقة مخصصة لإدارة المنتجات، الطلبات، وتحليلات المتجر
+            منطقة مخصصة ومحمية لإدارة المنتجات، الطلبات، وتحليلات المتجر
           </p>
         </div>
 
@@ -64,9 +85,10 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
             <input
               type="text"
               required
+              disabled={loading}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full text-sm p-3 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden"
+              className="w-full text-sm p-3 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden disabled:opacity-50"
               placeholder="admin"
             />
           </div>
@@ -77,30 +99,42 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
               <input
                 type="password"
                 required
+                disabled={loading}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full text-sm p-3 pr-10 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden"
+                className="w-full text-sm p-3 pr-10 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden disabled:opacity-50"
                 placeholder="أدخل كلمة المرور"
               />
               <KeyRound className="w-4 h-4 text-stone-400 absolute right-3.5 top-3.5" />
             </div>
             <p className="text-[11px] text-stone-400 mt-1.5">
-              💡 كلمة المرور الافتراضية للتجربة هي: <strong className="text-rose-600">admin</strong> (يمكنك تغييرها لاحقاً من الإعدادات).
+              مصادقة الخادم مؤمنة بنظام حماية ضد محاولات التخمين والتشفير الرقمي.
             </p>
           </div>
 
           <button
             type="submit"
-            className="w-full bg-rose-600 hover:bg-rose-700 text-white py-3.5 px-4 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-4"
+            disabled={loading}
+            className="w-full bg-rose-600 hover:bg-rose-700 text-white py-3.5 px-4 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-50"
           >
-            <ShieldCheck className="w-5 h-5" />
-            <span>تسجيل الدخول</span>
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>جاري التحقق من الصلاحيات...</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-5 h-5" />
+                <span>تسجيل الدخول</span>
+              </>
+            )}
           </button>
         </form>
 
         <div className="mt-6 pt-6 border-t border-stone-100 text-center">
           <button
             onClick={onBackToStore}
+            disabled={loading}
             className="text-xs font-bold text-stone-500 hover:text-stone-800 flex items-center justify-center gap-1.5 mx-auto transition-colors"
           >
             <Store className="w-4 h-4 text-rose-600" />

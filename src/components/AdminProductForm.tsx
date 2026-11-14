@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { Category, Product, StoreSettings, UserProfile } from '../types';
 import { SAMPLE_AI_PRESETS } from '../data/initialData';
-import { getProductFormDraft, saveProductFormDraft, clearProductFormDraft } from '../lib/storage';
+import { getProductFormDraft, saveProductFormDraft, clearProductFormDraft, getAuthHeaders } from '../lib/storage';
 
 const LazyAIVideoStudio = lazy(() =>
   import('./AIVideoStudio').then((m) => ({ default: m.AIVideoStudio || m.default }))
@@ -289,7 +289,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   const requestAiAnalysis = async (base64: string, mimeType: string = 'image/jpeg') => {
     const response = await fetch('/api/generate-product-content', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         imageBase64: base64,
         mimeType: mimeType,

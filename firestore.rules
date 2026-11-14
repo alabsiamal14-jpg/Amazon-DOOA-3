@@ -31,11 +31,15 @@ service cloud.firestore {
       );
     }
 
-    // Orders: حماية الطلبات ودعم الطلبات المشتركة لفريق العمل (Staff/Admin/Driver) والعملاء والضيوف
+    // Admins: تقييد الوصول لقائمة المدراء بالمدراء المعتمدين فقط
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Orders: حماية الطلبات ودعم الطلبات المشتركة لفريق العمل (Staff/Admin/Driver) والعملاء لمشترياتهم فقط
     match /orders/{orderId} {
-      allow get: if (request.auth != null && (request.auth.uid == resource.data.userId || isStaff() || isDriver()))
-                   || (resource.data.userId == 'guest');
-      allow list: if isStaff() || isDriver() || (request.auth != null && request.auth.uid != null);
+      allow get: if request.auth != null && (request.auth.uid == resource.data.userId || isStaff() || isDriver());
+      allow list: if isStaff() || isDriver() || (request.auth != null && resource.data.userId == request.auth.uid);
       allow create: if (
           (request.auth != null && request.resource.data.userId == request.auth.uid) ||
           (request.resource.data.userId == 'guest' || !('userId' in request.resource.data))
