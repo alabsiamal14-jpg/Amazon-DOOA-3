@@ -1,10 +1,12 @@
-import { db } from '../db/index.ts';
+import { db, isPostgresConfigured } from '../db/index.ts';
 import { products, orders, orderOutbox } from '../db/schema.ts';
+import { getProductById, updateProductStockInDb } from '../db/products.ts';
+import { getOrderByNumber, createOrderInDb } from '../db/orders.ts';
 import { eq } from 'drizzle-orm';
 import { db as firestoreDb } from '../lib/firebase.ts';
 import { doc, setDoc } from 'firebase/firestore';
 import { getProductPricing } from '../lib/pricing.ts';
-import type { StoreSettings, Order, OrderItem } from '../types.ts';
+import type { StoreSettings, Order } from '../types.ts';
 import { triggerOrderConfirmation } from '../lib/notifications.ts';
 
 export interface CheckoutRequest {
@@ -92,16 +94,20 @@ export async function syncOrderToFirestoreWithRetry(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       await setDoc(orderDocRef, payload, { merge: true });
-      await db.update(orderOutbox)
-        .set({ status: 'synced', attempts: attempt, updatedAt: new Date() })
-        .where(eq(orderOutbox.idempotencyKey, idempotencyKey));
+      if (isPostgresConfigured) {
+        await db.update(orderOutbox)
+          .set({ status: 'synced', attempts: attempt, updatedAt: new Date() })
+          .where(eq(orderOutbox.idempotencyKey, idempotencyKey));
+      }
       console.info(`[Transactional Outbox & Firestore Sync] Order #${order.order_number} successfully synchronized on attempt ${attempt}.`);
       return 'synced';
     } catch (fsErr: any) {
       console.warn(`[Firestore Sync] Attempt ${attempt}/${maxRetries} failed for order #${order.order_number}:`, fsErr.message);
-      await db.update(orderOutbox)
-        .set({ attempts: attempt, lastError: fsErr.message, status: attempt === maxRetries ? 'failed' : 'pending', updatedAt: new Date() })
-        .where(eq(orderOutbox.idempotencyKey, idempotencyKey));
+      if (isPostgresConfigured) {
+        await db.update(orderOutbox)
+          .set({ attempts: attempt, lastError: fsErr.message, status: attempt === maxRetries ? 'failed' : 'pending', updatedAt: new Date() })
+          .where(eq(orderOutbox.idempotencyKey, idempotencyKey));
+      }
       if (attempt < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, attempt * 300));
       }
@@ -149,6 +155,106 @@ export async function processServerCheckout(req: CheckoutRequest): Promise<Check
   }
 
   const orderNum = req.orderNumber || 'ELEN-' + Math.floor(1000 + Math.random() * 9000);
+
+  if (!isPostgresConfigured) {
+    const existing = await getOrderByNumber(orderNum);
+    if (existing) {
+      const existingFormatted: Order = {
+        id: String(existing.id),
+        order_number: existing.orderNumber,
+        userId,
+        customer_name: existing.customerName,
+        customer_phone: existing.customerPhone,
+        customer_email: existing.customerEmail || undefined,
+        city: existing.city,
+        address: existing.address,
+        notes: existing.notes || undefined,
+        items: existing.items as any,
+        subtotal: existing.subtotal,
+        discount_amount: existing.discountAmount || 0,
+        delivery_fee: existing.deliveryFee || 0,
+        total_amount: existing.totalAmount,
+        status: existing.status as any,
+        payment_method: existing.paymentMethod || undefined,
+        delivery_speed: existing.deliverySpeed || undefined,
+        whatsapp_sent: existing.whatsappSent || false,
+        created_at: existing.createdAt ? existing.createdAt.toISOString() : new Date().toISOString(),
+      };
+      return { success: true, isDuplicate: true, order: existingFormatted, syncStatus: 'synced' };
+    }
+
+    const sortedItems = [...items].sort((a, b) => a.product_id.localeCompare(b.product_id));
+    let subtotal = 0;
+    const verifiedSnapshotItems: any[] = [];
+
+    for (const item of sortedItems) {
+      const prod = await getProductById(item.product_id);
+      if (!prod) {
+        throw new Error(`المنتج بالمعرف "${item.product_id}" غير موجود في كتالوج المنتجات المعتمد في قاعدة البيانات. لا يُسمح بإنشاء أو نشر منتجات غير معتمدة أثناء إتمام الطلب.`);
+      }
+      const currentStock = Number(prod.stockQuantity) || 0;
+      const requestedQty = Math.max(1, Math.floor(Number(item.quantity) || 1));
+      if (currentStock < requestedQty || currentStock <= 0) {
+        throw new Error(
+          `عذراً، المنتج "${prod.titleAr}" نفد من المخزون أو الكمية المطلوبة (${requestedQty}) غير متوفرة (المتوفر حالياً: ${currentStock}).`
+        );
+      }
+      const pricing = getProductPricing({
+        original_price: Number(prod.originalPrice),
+        discount_price: prod.discountPrice !== null ? Number(prod.discountPrice) : null,
+      });
+      const unitPrice = pricing.finalPrice;
+      const lineTotal = unitPrice * requestedQty;
+      subtotal += lineTotal;
+      await updateProductStockInDb(item.product_id, currentStock - requestedQty);
+      verifiedSnapshotItems.push({
+        product_id: prod.productId,
+        title_ar: prod.titleAr,
+        original_price: pricing.originalPrice,
+        discount_price: pricing.discountPrice,
+        price: unitPrice,
+        quantity: requestedQty,
+        total_price: lineTotal,
+        image_url: prod.imageUrl || '',
+      });
+    }
+
+    const isExpress = deliverySpeed.includes('إكسبرس');
+    const isFreeDelivery = subtotal >= STORE_SETTINGS.freeDeliveryThreshold;
+    const standardFee = isFreeDelivery ? 0 : STORE_SETTINGS.deliveryFee;
+    const expressFee = isExpress ? 15 : 0;
+    const deliveryFee = standardFee + expressFee;
+    const couponDiscount = validateCouponDiscountServer(couponCode, subtotal);
+    const grandTotal = Math.max(0, subtotal - couponDiscount + deliveryFee);
+
+    const orderToSave: Order = {
+      id: idempotencyKey,
+      order_number: orderNum,
+      userId,
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      customer_email: customerEmail || undefined,
+      city,
+      address,
+      notes: notes || undefined,
+      items: verifiedSnapshotItems,
+      subtotal,
+      discount_amount: couponDiscount,
+      delivery_fee: deliveryFee,
+      total_amount: grandTotal,
+      status: 'pending',
+      payment_method: paymentMethod || undefined,
+      delivery_speed: deliverySpeed || undefined,
+      whatsapp_sent: true,
+      created_at: new Date().toISOString(),
+    };
+    await createOrderInDb(orderToSave);
+    const syncStatus = await syncOrderToFirestoreWithRetry(orderToSave, idempotencyKey, 1);
+    triggerOrderConfirmation(orderToSave, STORE_SETTINGS as any).catch((err) => {
+      console.warn('[Notification Trigger] Failed background notification trigger:', err.message);
+    });
+    return { success: true, isDuplicate: false, order: orderToSave, syncStatus };
+  }
 
   // --- ATOMIC DATABASE TRANSACTION WITH PESSIMISTIC ROW LOCKING ---
   const transactionResult = await db.transaction(async (tx) => {

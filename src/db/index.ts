@@ -1,6 +1,10 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
+import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from './schema.ts';
+
+export const isPostgresConfigured = Boolean(
+  process.env.SQL_HOST?.trim() || process.env.DATABASE_URL?.trim()
+);
 
 // Add global connection pool caching to persist across hot-reloads
 declare global {
@@ -8,10 +12,15 @@ declare global {
 }
 
 // Function to create or retrieve the connection pool.
-export const createPool = () => {
+export const createPool = (): Pool | null => {
+  if (!isPostgresConfigured) {
+    return null;
+  }
   if (!global._postgresPool) {
-    const hasSqlHost = Boolean(process.env.SQL_HOST);
-    const useSsl = process.env.SQL_SSL === 'true' || (!hasSqlHost && Boolean(process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')));
+    const hasSqlHost = Boolean(process.env.SQL_HOST?.trim());
+    const useSsl =
+      process.env.SQL_SSL === 'true' ||
+      (!hasSqlHost && Boolean(process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')));
     const poolConfig = hasSqlHost
       ? {
           host: process.env.SQL_HOST,
@@ -22,18 +31,9 @@ export const createPool = () => {
           max: 10,
           connectionTimeoutMillis: 15000,
         }
-      : process.env.DATABASE_URL
-      ? {
+      : {
           connectionString: process.env.DATABASE_URL,
           ssl: useSsl ? { rejectUnauthorized: false } : undefined,
-          max: 10,
-          connectionTimeoutMillis: 15000,
-        }
-      : {
-          host: process.env.SQL_HOST,
-          user: process.env.SQL_USER,
-          password: process.env.SQL_PASSWORD,
-          database: process.env.SQL_DB_NAME,
           max: 10,
           connectionTimeoutMillis: 15000,
         };
@@ -48,8 +48,31 @@ export const createPool = () => {
   return global._postgresPool;
 };
 
-// Create or retrieve the pool instance.
 const pool = createPool();
 
-// Initialize Drizzle with the pool and schema.
-export const db = drizzle(pool, { schema });
+function createMockChain(): any {
+  const emptyPromise = Promise.resolve([]);
+  const proxy: any = new Proxy(() => proxy, {
+    get(_, prop) {
+      if (prop === 'then') return emptyPromise.then.bind(emptyPromise);
+      if (prop === 'catch') return emptyPromise.catch.bind(emptyPromise);
+      if (prop === 'finally') return emptyPromise.finally.bind(emptyPromise);
+      return () => proxy;
+    },
+    apply() {
+      return proxy;
+    },
+  });
+  return proxy;
+}
+
+export const db: NodePgDatabase<typeof schema> = pool
+  ? drizzle(pool, { schema })
+  : (new Proxy({}, {
+      get(_, prop) {
+        if (prop === 'transaction') {
+          return async (cb: (tx: any) => Promise<any>) => cb(db);
+        }
+        return () => createMockChain();
+      },
+    }) as unknown as NodePgDatabase<typeof schema>);

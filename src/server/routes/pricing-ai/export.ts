@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import { google } from 'googleapis';
 import { requireAuth, AuthRequest } from '../../../middleware/auth.ts';
 
 const router = Router();
@@ -30,6 +29,9 @@ router.post('/sheets', requireAuth, async (req: AuthRequest, res: Response) => {
     if (!products || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'لا توجد بيانات للتصدير.' });
     }
+
+    // Lazy-load googleapis only when exporting to Sheets
+    const { google } = await import('googleapis');
 
     // Initialize Auth with the user's access token
     const oauth2Client = new google.auth.OAuth2();

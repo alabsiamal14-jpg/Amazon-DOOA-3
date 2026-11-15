@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import http from 'http';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,7 +18,7 @@ import { getOrCreateUser, getUserByUid } from './src/db/users.ts';
 import { getAllProducts, upsertProduct, deleteProductFromDb, updateProductStockInDb } from './src/db/products.ts';
 import { getAllOrders, getOrderByNumber, createOrderInDb, updateOrderStatusInDb, assignDriverInDb, updateDeliveryStatusInDb } from './src/db/orders.ts';
 import { getReviewsForProduct, createReviewInDb } from './src/db/reviews.ts';
-import { db } from './src/db/index.ts';
+import { db, isPostgresConfigured } from './src/db/index.ts';
 import { orderOutbox } from './src/db/schema.ts';
 import videoAnalyzeRouter from './src/server/routes/video-orders/analyze.ts';
 import videoConfirmRouter from './src/server/routes/video-orders/confirm.ts';
@@ -612,6 +613,17 @@ app.get('/api/admin/orders/sync-status', requireAdmin, async (req: AuthRequest, 
 
 // Transactional Outbox Observability & Recovery Status Endpoint
 app.get('/api/admin/orders/outbox-status', requireAdmin, async (req: AuthRequest, res) => {
+  if (!isPostgresConfigured) {
+    return res.json({
+      ok: true,
+      totalOutboxEvents: 0,
+      pendingEvents: 0,
+      failedEvents: 0,
+      syncedEvents: 0,
+      events: [],
+      notice: 'PostgreSQL not configured; running in Firestore/in-memory mode',
+    });
+  }
   try {
     const outboxEvents = await db.select().from(orderOutbox).limit(50);
     return res.json({
@@ -1452,23 +1464,25 @@ app.post('/api/ai/developer-advisor', requireAdmin, async (req: AuthRequest, res
     // Intent: Parse WhatsApp Chat
     if (messageLower.includes('مجموعة') || messageLower.includes('راونق') || messageLower.includes('نسخ')) {
         const parsedData = await chatParser.parseWhatsAppChat(message);
-        
-        // Save to Firestore (Simplified: would need robust ID management)
-        const supplierRef = await adminDb.collection('supplier_ai_suppliers').add({
-            businessName: parsedData.supplier.businessName,
-            whatsappPhone: parsedData.supplier.whatsappPhone,
-            createdAt: new Date().toISOString()
-        });
-        
-        for (const prod of parsedData.products) {
-            await adminDb.collection('supplier_ai_price_observations').add({
-                supplierId: supplierRef.id,
-                productName: prod.name,
-                supplierCost: prod.cost,
-                currency: prod.currency,
-                observedAt: new Date().toISOString(),
-                createdAt: new Date().toISOString()
-            });
+        try {
+          const supplierRef = await adminDb.collection('supplier_ai_suppliers').add({
+              businessName: parsedData.supplier.businessName,
+              whatsappPhone: parsedData.supplier.whatsappPhone,
+              createdAt: new Date().toISOString()
+          });
+          
+          for (const prod of parsedData.products) {
+              await adminDb.collection('supplier_ai_price_observations').add({
+                  supplierId: supplierRef.id,
+                  productName: prod.name,
+                  supplierCost: prod.cost,
+                  currency: prod.currency,
+                  observedAt: new Date().toISOString(),
+                  createdAt: new Date().toISOString()
+              });
+          }
+        } catch (fsErr: any) {
+          console.warn('[Developer Advisor] adminDb write notice:', fsErr.message);
         }
         
         supplierData = `تم تحليل وحفظ بيانات المورد والمنتجات بنجاح من المحادثة: ${parsedData.supplier.businessName}`;
@@ -1602,10 +1616,15 @@ app.all('/api/*', (req, res) => {
 
 // Setup Vite middleware in dev or static files in production
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -1616,10 +1635,18 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, HOST, () => {
+  httpServer.on('error', (err) => {
+    console.error('[Server] HTTP server error:', err);
+  });
+
+  httpServer.listen(PORT, HOST, () => {
     console.log(`Server running at http://${HOST}:${PORT}`);
   });
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled Rejection:', reason);
+});
 
 // In Vercel serverless environment or test suites, requests are routed to app directly
 if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {

@@ -1,8 +1,31 @@
-import { db } from './index.ts';
+import { db, isPostgresConfigured } from './index.ts';
 import { users } from './schema.ts';
 import { eq } from 'drizzle-orm';
 
+type DbUserRow = typeof users.$inferSelect;
+const memoryUsers = new Map<string, DbUserRow>();
+let memoryUserIdCounter = 1;
+
 export async function getOrCreateUser(uid: string, email: string, displayName?: string) {
+  if (!isPostgresConfigured) {
+    const existing = memoryUsers.get(uid);
+    if (existing) {
+      existing.email = email;
+      if (displayName) existing.displayName = displayName;
+      return existing;
+    }
+    const created: DbUserRow = {
+      id: memoryUserIdCounter++,
+      uid,
+      email,
+      displayName: displayName || null,
+      role: email.toLowerCase() === 'omralabis@gmail.com' ? 'admin' : 'customer',
+      createdAt: new Date(),
+    };
+    memoryUsers.set(uid, created);
+    return created;
+  }
+
   try {
     const result = await db
       .insert(users)
@@ -28,6 +51,9 @@ export async function getOrCreateUser(uid: string, email: string, displayName?: 
 }
 
 export async function getUserByUid(uid: string) {
+  if (!isPostgresConfigured) {
+    return memoryUsers.get(uid) || null;
+  }
   try {
     const userRecords = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
     return userRecords[0] || null;
@@ -38,6 +64,12 @@ export async function getUserByUid(uid: string) {
 }
 
 export async function updateUserRole(uid: string, role: 'admin' | 'staff' | 'user') {
+  if (!isPostgresConfigured) {
+    const existing = memoryUsers.get(uid);
+    if (!existing) return null;
+    existing.role = role;
+    return existing;
+  }
   try {
     const result = await db.update(users).set({ role }).where(eq(users.uid, uid)).returning();
     return result[0] || null;
@@ -48,6 +80,12 @@ export async function updateUserRole(uid: string, role: 'admin' | 'staff' | 'use
 }
 
 export async function getUserByEmail(email: string) {
+  if (!isPostgresConfigured) {
+    for (const u of memoryUsers.values()) {
+      if (u.email.toLowerCase() === email.toLowerCase()) return u;
+    }
+    return null;
+  }
   try {
     const userRecords = await db.select().from(users).where(eq(users.email, email)).limit(1);
     return userRecords[0] || null;
