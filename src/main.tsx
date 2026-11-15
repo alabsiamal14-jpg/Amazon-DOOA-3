@@ -42,4 +42,12 @@ console.warn = function (...args) {
   originalWarn.apply(console, args);
 };
 
+if ('serviceWorker' in navigator && process.env.NODE_ENV !== 'development') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+
 createRoot(document.getElementById('root')!).render(<App />);
