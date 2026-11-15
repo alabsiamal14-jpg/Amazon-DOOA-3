@@ -9,6 +9,7 @@ import {
   sendPasswordResetEmail,
   updateProfile,
   onAuthStateChanged,
+  onIdTokenChanged,
   User as FirebaseUser,
 } from 'firebase/auth';
 import {
@@ -29,7 +30,14 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Product, CartItem, Order, OrderStatus, UserProfile } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialData';
-import { getStoredProducts, saveStoredProducts, getStoredOrders, saveStoredOrders } from './storage';
+import {
+  getStoredProducts,
+  saveStoredProducts,
+  getStoredOrders,
+  saveStoredOrders,
+  setFirebaseIdToken,
+  registerFirebaseTokenProvider,
+} from './storage';
 
 // =========================================================================
 // 1. FIREBASE SINGLETON INITIALIZATION WITH EXACT PROJECT CONFIGURATION
@@ -41,6 +49,26 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 // Auth Instance
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
+
+registerFirebaseTokenProvider(async () => {
+  if (!auth.currentUser) return null;
+  const token = await auth.currentUser.getIdToken();
+  setFirebaseIdToken(token);
+  return token;
+});
+
+onIdTokenChanged(auth, async (user) => {
+  if (!user) {
+    setFirebaseIdToken(null);
+    return;
+  }
+  try {
+    const token = await user.getIdToken();
+    setFirebaseIdToken(token);
+  } catch {
+    setFirebaseIdToken(null);
+  }
+});
 
 // Workspace Scopes
 googleAuthProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
@@ -229,6 +257,7 @@ export async function resetUserPassword(email: string): Promise<void> {
 }
 
 export async function logoutFirebase(): Promise<void> {
+  setFirebaseIdToken(null);
   await signOut(auth);
 }
 
@@ -236,7 +265,9 @@ export async function syncUserProfile(
   firebaseUser: FirebaseUser,
   customName?: string
 ): Promise<UserProfile> {
-  const isAdminEmail = firebaseUser.email?.toLowerCase() === 'omralabis@gmail.com';
+  const isAdminEmail =
+    firebaseUser.email?.toLowerCase() === 'omralabis@gmail.com' &&
+    Boolean(firebaseUser.emailVerified);
   
   const userRef = doc(db, 'users', firebaseUser.uid);
   try {
@@ -248,7 +279,7 @@ export async function syncUserProfile(
         name: data.name || customName || firebaseUser.displayName || 'مستخدم أمازون دعاء',
         email: data.email || firebaseUser.email || '',
         photoURL: data.photoURL || firebaseUser.photoURL || undefined,
-        role: data.role || (isAdminEmail ? 'admin' : 'user'),
+        role: data.role || (isAdminEmail ? 'admin' : 'customer'),
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
       };
@@ -257,8 +288,8 @@ export async function syncUserProfile(
     console.warn('Could not read user profile from Firestore:', err);
   }
 
-  // Create clean user document matching Firestore Schema without password
-  const role: 'admin' | 'user' = isAdminEmail ? 'admin' : 'user';
+  // Create clean user document matching Firestore Rules (initial create requires role == 'customer')
+  const role: 'admin' | 'customer' = isAdminEmail ? 'admin' : 'customer';
   const newProfile: UserProfile = {
     uid: firebaseUser.uid,
     name: customName || firebaseUser.displayName || 'مستخدم أمازون دعاء',
@@ -270,8 +301,12 @@ export async function syncUserProfile(
   };
 
   try {
-    await setDoc(userRef, newProfile);
+    await setDoc(userRef, {
+      ...newProfile,
+      role: 'customer',
+    });
     if (role === 'admin') {
+      await setDoc(userRef, { role: 'admin', updatedAt: new Date().toISOString() }, { merge: true });
       await setDoc(doc(db, 'admins', firebaseUser.uid), {
         email: firebaseUser.email,
         role: 'admin',
@@ -302,7 +337,11 @@ export function subscribeToAuthState(
         name: firebaseUser.displayName || 'مستخدم أمازون دعاء',
         email: firebaseUser.email || '',
         photoURL: firebaseUser.photoURL || undefined,
-        role: firebaseUser.email?.toLowerCase() === 'omralabis@gmail.com' ? 'admin' : 'user',
+        role:
+          firebaseUser.email?.toLowerCase() === 'omralabis@gmail.com' &&
+          Boolean(firebaseUser.emailVerified)
+            ? 'admin'
+            : 'customer',
       });
     }
   });
@@ -719,11 +758,15 @@ export async function createOrderFirestore(order: Order, userId?: string): Promi
       customer_address: order.address,
       items: order.items || [],
       subtotal: Number(order.subtotal || 0),
+      discount_amount: Number(order.discount_amount || 0),
+      coupon_code: order.coupon_code || null,
       delivery_fee: Number(order.delivery_fee || 0),
       total_amount: Number(order.total_amount || 0),
       currency: 'ريال',
       status: order.status || 'pending',
       payment_method: order.payment_method || 'cod',
+      delivery_speed: order.delivery_speed || 'توصيل قياسي',
+      whatsapp_sent: Boolean(order.whatsapp_sent ?? true),
       notes: order.notes || '',
       createdAt: order.created_at || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -855,7 +898,7 @@ export async function updateOrderDriverFirestore(
 /**
  * Update user role in Firestore (Admin only)
  */
-export async function updateUserProfileRole(uid: string, role: 'admin' | 'staff' | 'driver' | 'user'): Promise<void> {
+export async function updateUserProfileRole(uid: string, role: 'admin' | 'staff' | 'driver' | 'user' | 'customer'): Promise<void> {
   if (!uid) return;
   try {
     const userRef = doc(db, 'users', uid);

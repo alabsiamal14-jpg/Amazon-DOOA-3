@@ -28,7 +28,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { CartItem, StoreSettings, Order, Product, CustomerOrderInfo } from '../types';
-import { auth } from '../lib/firebase.ts';
+import { getAuthHeadersAsync } from '../lib/storage';
 import { MatchedVideoOrderItem } from '../types/videoOrder.ts';
 import { generateWhatsAppOrderUrl } from '../lib/whatsapp';
 import { getProductPricing } from '../lib/pricing';
@@ -219,18 +219,28 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setCouponError('');
     const code = couponCode.trim().toUpperCase();
 
-    if (code === 'BEAUTY10') {
+    if (code === 'BEAUTY10' || code === 'DUAA10') {
       const disc = Math.round(traditionalSubtotal * 0.1);
       setCouponDiscount(disc);
-      setAppliedCoupon('BEAUTY10 (خصم 10%)');
-      showToast('تم تطبيق الكوبون BEAUTY10 بنجاح!', 'success');
+      setAppliedCoupon(`${code} (خصم 10%)`);
+      showToast(`تم تطبيق الكوبون ${code} بنجاح!`, 'success');
+    } else if (code === 'AMAZON15') {
+      const disc = Math.round(traditionalSubtotal * 0.15);
+      setCouponDiscount(disc);
+      setAppliedCoupon('AMAZON15 (خصم 15%)');
+      showToast('تم تطبيق الكوبون AMAZON15 بنجاح!', 'success');
+    } else if (code === 'BEAUTY20') {
+      const disc = Math.round(traditionalSubtotal * 0.2);
+      setCouponDiscount(disc);
+      setAppliedCoupon('BEAUTY20 (خصم 20%)');
+      showToast('تم تطبيق الكوبون BEAUTY20 بنجاح!', 'success');
     } else if (code === 'WELCOME') {
       const disc = Math.min(20, traditionalSubtotal);
       setCouponDiscount(disc);
       setAppliedCoupon('WELCOME (خصم 20 ريال)');
       showToast('تم تطبيق الكوبون WELCOME بنجاح!', 'success');
     } else {
-      setCouponError('رمز الكوبون غير صالح. جرب BEAUTY10 أو WELCOME');
+      setCouponError('رمز الكوبون غير صالح. جرب BEAUTY10 أو DUAA10 أو WELCOME');
       showToast('رمز الكوبون المكتوب غير صالح', 'error');
     }
   };
@@ -256,6 +266,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setIsPlacingTraditional(true);
     try {
       const orderNum = 'ELEN-' + Math.floor(1000 + Math.random() * 9000);
+      const cleanCouponCode = appliedCoupon ? appliedCoupon.split(' ')[0].trim().toUpperCase() : undefined;
       const newOrder: Order = {
         id: 'order-' + Date.now(),
         order_number: orderNum,
@@ -274,6 +285,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         })),
         subtotal: traditionalSubtotal,
         discount_amount: couponDiscount,
+        coupon_code: cleanCouponCode,
         delivery_fee: traditionalDeliveryFee,
         total_amount: traditionalGrandTotal,
         status: 'pending',
@@ -364,8 +376,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
     try {
       // Fetch user Auth token securely
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) {
         throw new Error('يرجى تسجيل الدخول أولاً لتتمكن من رفع وتحليل الفيديو.');
       }
 
@@ -376,9 +388,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
       const res = await fetch('/api/video-orders/analyze', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders,
         body: formData,
       });
 
@@ -440,8 +450,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setIsConfirming(true);
 
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) {
         throw new Error('يرجى تسجيل الدخول للتأكيد.');
       }
 
@@ -466,7 +476,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify(postBody),
       });

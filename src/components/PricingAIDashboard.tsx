@@ -23,8 +23,7 @@ import {
   FileText,
   DollarSign
 } from 'lucide-react';
-import { auth } from '../lib/firebase';
-import { getAdminToken } from '../lib/storage';
+import { getAuthHeadersAsync } from '../lib/storage';
 import { PricingConversation, PricingMessage, SupplierRegistryItem, PriceObservation } from '../features/pricing-ai/types';
 
 export const PricingAIDashboard: React.FC = () => {
@@ -114,10 +113,10 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch conversations
   const loadConversations = async () => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/conversations', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         const data = await res.json();
@@ -134,10 +133,10 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch messages
   const loadMessages = async (convId: string) => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         const data = await res.json();
@@ -151,10 +150,10 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch suppliers
   const loadSuppliers = async () => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/suppliers', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         const data = await res.json();
@@ -168,10 +167,10 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch price history for specific supplier
   const loadSupplierPrices = async (supplierId: string) => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/suppliers/${supplierId}/prices`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         const data = await res.json();
@@ -185,10 +184,10 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch all price observations
   const loadObservations = async () => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/prices/observations', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         const data = await res.json();
@@ -203,13 +202,13 @@ export const PricingAIDashboard: React.FC = () => {
   const handleNewConversation = async () => {
     setIsCreatingConv(true);
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/conversations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({ title: `جلسة تسعير ذكية #${conversations.length + 1}` })
       });
@@ -233,11 +232,11 @@ export const PricingAIDashboard: React.FC = () => {
     if (!window.confirm('هل أنتِ متأكدة من حذف هذه المحادثة وجميع رسائلها؟')) return;
 
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
       if (res.ok) {
         setConversations(conversations.filter(c => c.id !== convId));
@@ -261,13 +260,13 @@ export const PricingAIDashboard: React.FC = () => {
   const handleSaveRename = async (convId: string) => {
     if (!editingTitle.trim()) return;
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({ title: editingTitle })
       });
@@ -331,14 +330,14 @@ export const PricingAIDashboard: React.FC = () => {
     setMessages(prev => [...prev, tempUserMsg]);
 
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
 
       const res = await fetch(`/api/pricing-ai/conversations/${activeConvId}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({
           content: sentText,
@@ -369,14 +368,14 @@ export const PricingAIDashboard: React.FC = () => {
   // Approve price observation
   const handleApprovePrice = async (obsId: string) => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/prices/approve', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({ id: obsId })
       });
@@ -399,14 +398,14 @@ export const PricingAIDashboard: React.FC = () => {
   // Reject price observation
   const handleRejectPrice = async (obsId: string) => {
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/prices/reject', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({ id: obsId })
       });
@@ -430,12 +429,12 @@ export const PricingAIDashboard: React.FC = () => {
   const handleDeletePrice = async (obsId: string) => {
     if (!window.confirm('هل تريد حذف سجل السعر هذا نهائياً من أرشيف الأسعار؟')) return;
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
 
       const res = await fetch(`/api/pricing-ai/prices/${obsId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders
       });
 
       if (res.ok) {
@@ -459,14 +458,14 @@ export const PricingAIDashboard: React.FC = () => {
     }
 
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) return;
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/suppliers', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...authHeaders
         },
         body: JSON.stringify({
           name: newSupplierName,

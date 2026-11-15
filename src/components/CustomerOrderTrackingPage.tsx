@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Order, OrderStatus, StoreSettings, Product } from '../types';
 import { trackOrdersCloud } from '../lib/cloud';
-import { getStoredOrders } from '../lib/storage';
+import { getStoredOrders, getAuthHeadersAsync } from '../lib/storage';
 import { ShippingRouteMap } from './ShippingRouteMap';
 
 interface CustomerOrderTrackingPageProps {
@@ -144,7 +144,8 @@ export const CustomerOrderTrackingPage: React.FC<CustomerOrderTrackingPageProps>
       if (matches.length === 0 && num && phone) {
         try {
           const apiRes = await fetch(
-            `/api/db/orders/${encodeURIComponent(num)}?phone=${encodeURIComponent(phone)}`
+            `/api/db/orders/${encodeURIComponent(num)}?phone=${encodeURIComponent(phone)}`,
+            { headers: await getAuthHeadersAsync() }
           );
           if (apiRes.ok) {
             const o = await apiRes.json();

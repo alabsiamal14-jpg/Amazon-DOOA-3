@@ -101,6 +101,7 @@ export interface Order {
   items: OrderItem[];
   subtotal: number;
   discount_amount: number;
+  coupon_code?: string;
   delivery_fee: number;
   total_amount: number;
   status: OrderStatus;
@@ -132,7 +133,7 @@ export interface UserProfile {
   name: string;
   email: string;
   photoURL?: string;
-  role: 'user' | 'admin' | 'staff' | 'driver';
+  role: 'customer' | 'user' | 'admin' | 'staff' | 'driver';
   phone?: string;
   city?: string;
   createdAt?: string;

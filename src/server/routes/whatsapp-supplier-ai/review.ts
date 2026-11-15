@@ -1,17 +1,13 @@
 import { Router, Response } from 'express';
 import { adminDb } from '../../../lib/firebase-admin.ts';
-import { requireAuth, AuthRequest } from '../../../middleware/auth.ts';
+import { requireAdmin, AuthRequest } from '../../../middleware/auth.ts';
 import { SupplierAiDocument, SupplierProductDraft } from '../../../features/whatsapp-supplier-ai/types/index.ts';
 
 const router = Router();
 
 // Endpoint: POST /api/whatsapp-supplier-ai/review
-router.post('/review', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/review', requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    // Admin Authorization Check
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية: هذا الإجراء مخصص لمدير النظام فقط.' });
-    }
 
     const { supplier, products } = req.body;
 

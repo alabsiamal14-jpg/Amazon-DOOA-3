@@ -3,8 +3,12 @@ import { Request, Response, NextFunction } from 'express';
 import { adminAuth } from '../lib/firebase-admin.ts';
 import { getUserByUid } from '../db/users.ts';
 
-const ADMIN_SECRET =
-  process.env.ADMIN_JWT_SECRET || process.env.SESSION_SECRET || 'amazon-duaa-secure-admin-token-secret-2026';
+export const SOVEREIGN_ADMIN_EMAIL = 'omralabis@gmail.com';
+
+export function getAdminJwtSecret(): string | null {
+  const secret = process.env.ADMIN_JWT_SECRET?.trim() || process.env.SESSION_SECRET?.trim();
+  return secret || null;
+}
 
 export interface AuthUser {
   uid: string;
@@ -12,6 +16,7 @@ export interface AuthUser {
   role: 'admin' | 'staff' | 'driver' | 'customer';
   username?: string;
   displayName?: string;
+  emailVerified?: boolean;
   isSuperAdmin?: boolean;
   [key: string]: any;
 }
@@ -20,24 +25,35 @@ export interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
+export function hasRole(user: AuthUser | undefined, allowedRoles: Array<AuthUser['role']>): boolean {
+  if (!user) return false;
+  return allowedRoles.includes(user.role);
+}
+
 /**
  * Creates an HMAC-SHA256 signed admin session token.
+ * Requires ADMIN_JWT_SECRET or SESSION_SECRET in environment variables.
  * Token format: base64url(header).base64url(payload).signature
  */
 export function createAdminToken(username: string): string {
+  const secret = getAdminJwtSecret();
+  if (!secret) {
+    throw new Error('ADMIN_JWT_SECRET or SESSION_SECRET must be configured before issuing admin tokens.');
+  }
+
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const exp = Date.now() + 24 * 60 * 60 * 1000; // 24 hours expiry
   const payload = Buffer.from(
     JSON.stringify({
       sub: username,
       role: 'admin',
-      email: 'omralabis@gmail.com',
+      email: SOVEREIGN_ADMIN_EMAIL,
       exp,
     })
   ).toString('base64url');
 
   const signature = crypto
-    .createHmac('sha256', ADMIN_SECRET)
+    .createHmac('sha256', secret)
     .update(`${header}.${payload}`)
     .digest('base64url');
 
@@ -50,12 +66,15 @@ export function createAdminToken(username: string): string {
  */
 export function verifyAdminToken(token: string): AuthUser | null {
   try {
+    const secret = getAdminJwtSecret();
+    if (!secret) return null;
+
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const [header, payload, signature] = parts;
 
     const expectedSignature = crypto
-      .createHmac('sha256', ADMIN_SECRET)
+      .createHmac('sha256', secret)
       .update(`${header}.${payload}`)
       .digest('base64url');
 
@@ -72,10 +91,11 @@ export function verifyAdminToken(token: string): AuthUser | null {
 
     return {
       uid: 'admin-super-uid',
-      email: decoded.email || 'omralabis@gmail.com',
+      email: decoded.email || SOVEREIGN_ADMIN_EMAIL,
       role: 'admin',
       username: decoded.sub || 'admin',
       displayName: 'مدير المتجر',
+      emailVerified: true,
       isSuperAdmin: true,
     };
   } catch {
@@ -84,10 +104,57 @@ export function verifyAdminToken(token: string): AuthUser | null {
 }
 
 /**
+ * Resolves either a signed Admin session token or a Firebase ID Token into an RBAC AuthUser.
+ * Returns null if the token is invalid or expired.
+ */
+export async function resolveAuthenticatedUser(token: string): Promise<AuthUser | null> {
+  if (!token || token === 'undefined' || token === 'null') {
+    return null;
+  }
+
+  // 1. Check signed Admin session token
+  const adminSession = verifyAdminToken(token);
+  if (adminSession) {
+    return adminSession;
+  }
+
+  // 2. Check Firebase ID Token
+  const decodedToken = await adminAuth.verifyIdToken(token);
+  const email = decodedToken.email?.toLowerCase().trim();
+  const isVerifiedSovereign =
+    email === SOVEREIGN_ADMIN_EMAIL && decodedToken.email_verified === true;
+
+  let role: AuthUser['role'] = 'customer';
+  if (isVerifiedSovereign) {
+    role = 'admin';
+  } else {
+    try {
+      const dbUser = await getUserByUid(decodedToken.uid);
+      if (
+        dbUser &&
+        (dbUser.role === 'admin' || dbUser.role === 'staff' || dbUser.role === 'driver')
+      ) {
+        role = dbUser.role;
+      }
+    } catch (dbErr) {
+      console.warn('[Auth Middleware] Database user query notice:', dbErr);
+    }
+  }
+
+  return {
+    uid: decodedToken.uid,
+    email: decodedToken.email,
+    displayName: decodedToken.name,
+    emailVerified: Boolean(decodedToken.email_verified),
+    role,
+    isSuperAdmin: role === 'admin' && isVerifiedSovereign,
+  };
+}
+
+/**
  * Core Authentication Middleware:
  * Strictly verifies either a signed admin session token or a valid Firebase ID token.
  * Rejects any unauthenticated or invalid request with HTTP 401.
- * Never falls back to granting admin permissions to unauthenticated callers.
  */
 export const requireAuth = async (
   req: AuthRequest,
@@ -104,39 +171,12 @@ export const requireAuth = async (
     return res.status(401).json({ error: 'Unauthorized: Invalid token format' });
   }
 
-  // 1. Check for signed Admin session token
-  const adminSession = verifyAdminToken(token);
-  if (adminSession) {
-    req.user = adminSession;
-    return next();
-  }
-
-  // 2. Check for Firebase ID Token
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    let role: 'admin' | 'staff' | 'driver' | 'customer' = 'customer';
-
-    // omralabis@gmail.com is sovereign administrator
-    if (decodedToken.email?.toLowerCase() === 'omralabis@gmail.com') {
-      role = 'admin';
-    } else {
-      try {
-        const dbUser = await getUserByUid(decodedToken.uid);
-        if (dbUser && (dbUser.role === 'admin' || dbUser.role === 'staff' || dbUser.role === 'driver')) {
-          role = dbUser.role as any;
-        }
-      } catch (dbErr) {
-        console.warn('[Auth Middleware] Database user query notice:', dbErr);
-      }
+    const user = await resolveAuthenticatedUser(token);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
     }
-
-    req.user = {
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      displayName: decodedToken.name,
-      role,
-      isSuperAdmin: role === 'admin' && decodedToken.email?.toLowerCase() === 'omralabis@gmail.com',
-    };
+    req.user = user;
     return next();
   } catch (error: any) {
     console.warn('[Auth Middleware] Authentication failed:', error.message);
@@ -145,62 +185,19 @@ export const requireAuth = async (
 };
 
 /**
- * Administrator Role Verification Middleware:
- * Requires valid authentication AND role === 'admin' (or sovereign store owner).
- * Rejects non-admin authenticated users with HTTP 403 Forbidden.
+ * Unified RBAC Middleware Factory
  */
-export const requireAdmin = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  await requireAuth(req, res, () => {
-    if (req.user?.role === 'admin' || req.user?.email?.toLowerCase() === 'omralabis@gmail.com') {
-      return next();
-    }
-    return res.status(403).json({ error: 'Forbidden: Administrator privileges required' });
-  });
+export const requireRoles = (...allowedRoles: Array<AuthUser['role']>) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    await requireAuth(req, res, () => {
+      if (hasRole(req.user, allowedRoles)) {
+        return next();
+      }
+      return res.status(403).json({ error: 'Forbidden: Insufficient RBAC privileges' });
+    });
+  };
 };
 
-/**
- * Staff or Administrator Role Verification Middleware:
- * Allows admin and staff members to access operational and catalog features.
- */
-export const requireStaffOrAdmin = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  await requireAuth(req, res, () => {
-    if (
-      req.user?.role === 'admin' ||
-      req.user?.role === 'staff' ||
-      req.user?.email?.toLowerCase() === 'omralabis@gmail.com'
-    ) {
-      return next();
-    }
-    return res.status(403).json({ error: 'Forbidden: Staff or Administrator privileges required' });
-  });
-};
-
-/**
- * Driver, Staff, or Administrator Role Verification Middleware:
- * Allows delivery updates by authorized drivers, staff, and admins only.
- */
-export const requireDriverOrStaffOrAdmin = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  await requireAuth(req, res, () => {
-    if (
-      req.user?.role === 'admin' ||
-      req.user?.role === 'staff' ||
-      req.user?.role === 'driver' ||
-      req.user?.email?.toLowerCase() === 'omralabis@gmail.com'
-    ) {
-      return next();
-    }
-    return res.status(403).json({ error: 'Forbidden: Delivery, Staff, or Administrator privileges required' });
-  });
-};
+export const requireAdmin = requireRoles('admin');
+export const requireStaffOrAdmin = requireRoles('admin', 'staff');
+export const requireDriverOrStaffOrAdmin = requireRoles('admin', 'staff', 'driver');

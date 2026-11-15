@@ -20,8 +20,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { StoreSettings } from '../types';
-import { auth } from '../lib/firebase.ts';
-import { getAdminToken } from '../lib/storage.ts';
+import { getAuthHeadersAsync } from '../lib/storage.ts';
 
 interface Message {
   id: string;
@@ -148,12 +147,12 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
         const reader = new FileReader();
         reader.onload = async (event) => {
           const base64 = event.target?.result as string;
-          const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
+          const authHeaders = await getAuthHeadersAsync();
           const res = await fetch('/api/ai/analyze-project-zip', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
+              ...authHeaders
             },
             body: JSON.stringify({ fileData: base64, fileName: file.name })
           });
@@ -266,11 +265,12 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
         text: m.content,
       }));
 
+      const authHeaders = await getAuthHeadersAsync();
       const res = await fetch('/api/ai/developer-advisor', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${(await auth.currentUser?.getIdToken()) || getAdminToken()}`
+          ...authHeaders
         },
         body: JSON.stringify({
           message: query,

@@ -22,7 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { db, auth } from '../lib/firebase';
-import { getAdminToken } from '../lib/storage';
+import { getAuthHeadersAsync } from '../lib/storage';
 import { collection, getDocs, getDoc, addDoc, doc, setDoc, query, orderBy, onSnapshot, where, updateDoc, arrayUnion, runTransaction } from 'firebase/firestore';
 
 export interface SupplierItem {
@@ -450,8 +450,7 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
     setAnalysisStatusText('جار إعداد المواد ورفعها لمعالجة الذكاء الاصطناعي...');
 
     const combinedExtracted: ExtractedProductItem[] = [];
-    const currentUser = auth.currentUser;
-    const idToken = (currentUser ? await currentUser.getIdToken() : '') || getAdminToken() || '';
+    const authHeaders = await getAuthHeadersAsync();
 
     const formatProduct = (p: any, source: string) => {
         const name = (p.name && p.name !== 'Unknown') 
@@ -483,12 +482,9 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
           const formData = new FormData();
           formData.append('video', videoFile);
 
-          const headers: Record<string, string> = {};
-          if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
-
           const response = await fetch('/api/whatsapp-supplier-ai/analyze', {
             method: 'POST',
-            headers,
+            headers: authHeaders,
             body: formData,
           });
 
@@ -524,12 +520,9 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
         setAnalysisProgress(60);
         setAnalysisStatusText('جاري تحليل نص محادثة WhatsApp...');
         try {
-          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-          if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
-
           const response = await fetch('/api/pricing-ai/conversations', {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
             body: JSON.stringify({
               supplierId: selectedSupplier.id,
               supplierName: selectedSupplier.name,

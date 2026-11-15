@@ -1,10 +1,11 @@
 import { Router, Response } from 'express';
 import { adminDb, adminAuth } from '../../../lib/firebase-admin.ts';
-import { requireAuth, AuthRequest } from '../../../middleware/auth.ts';
+import { requireAdmin, AuthRequest } from '../../../middleware/auth.ts';
 import { GoogleGenAI } from '@google/genai';
 import { PriceObservation, SupplierRegistryItem } from '../../../features/pricing-ai/types/index.ts';
 
 const router = Router();
+router.use(requireAdmin);
 
 // Retrieve Gemini API Client
 const getGeminiClient = () => {
@@ -27,11 +28,8 @@ const getGeminiClient = () => {
 // =========================================================================
 
 // GET /api/pricing-ai/conversations
-router.get('/conversations', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/conversations', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية: هذا القسم مخصص للمدير فقط.' });
-    }
 
     try {
       console.info('[Pricing AI] Fetching conversations using Admin DB...');
@@ -59,11 +57,8 @@ router.get('/conversations', requireAuth, async (req: AuthRequest, res: Response
 });
 
 // POST /api/pricing-ai/conversations
-router.post('/conversations', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/conversations', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { title } = req.body;
     const id = `chat-${Date.now()}`;
@@ -87,11 +82,8 @@ router.post('/conversations', requireAuth, async (req: AuthRequest, res: Respons
 });
 
 // PUT /api/pricing-ai/conversations/:id
-router.put('/conversations/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.put('/conversations/:id', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.params;
     const { title } = req.body;
@@ -112,11 +104,8 @@ router.put('/conversations/:id', requireAuth, async (req: AuthRequest, res: Resp
 });
 
 // DELETE /api/pricing-ai/conversations/:id
-router.delete('/conversations/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.delete('/conversations/:id', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.params;
 
@@ -142,11 +131,8 @@ router.delete('/conversations/:id', requireAuth, async (req: AuthRequest, res: R
 });
 
 // GET /api/pricing-ai/conversations/:id/messages
-router.get('/conversations/:id/messages', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.params;
 
@@ -180,11 +166,8 @@ router.get('/conversations/:id/messages', requireAuth, async (req: AuthRequest, 
 // =========================================================================
 
 // POST /api/pricing-ai/conversations/:id/messages (Sends a message and processes with Gemini)
-router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/conversations/:id/messages', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id: conversationId } = req.params;
     const { content, attachment } = req.body; // attachment is optional { base64, mimeType, name }
@@ -473,11 +456,8 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
 // =========================================================================
 
 // GET /api/pricing-ai/suppliers
-router.get('/suppliers', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/suppliers', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     try {
       const snap = await adminDb.collection('supplier_ai_suppliers').get();
@@ -523,11 +503,8 @@ router.get('/suppliers', requireAuth, async (req: AuthRequest, res: Response) =>
 });
 
 // POST /api/pricing-ai/suppliers
-router.post('/suppliers', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/suppliers', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { name, businessName, whatsappPhone, country, city, notes, categories } = req.body;
 
@@ -605,11 +582,8 @@ router.post('/suppliers', requireAuth, async (req: AuthRequest, res: Response) =
 });
 
 // GET /api/pricing-ai/suppliers/:id/prices
-router.get('/suppliers/:id/prices', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/suppliers/:id/prices', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.params;
     try {
@@ -632,11 +606,8 @@ router.get('/suppliers/:id/prices', requireAuth, async (req: AuthRequest, res: R
 // =========================================================================
 
 // GET /api/pricing-ai/prices/observations
-router.get('/prices/observations', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/prices/observations', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     try {
       const snap = await adminDb.collection('pricing_ai_price_observations').get();
@@ -683,11 +654,8 @@ router.get('/prices/observations', requireAuth, async (req: AuthRequest, res: Re
 });
 
 // POST /api/pricing-ai/prices/approve
-router.post('/prices/approve', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/prices/approve', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'id required' });
@@ -710,11 +678,8 @@ router.post('/prices/approve', requireAuth, async (req: AuthRequest, res: Respon
 });
 
 // POST /api/pricing-ai/prices/reject
-router.post('/prices/reject', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/prices/reject', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'id required' });
@@ -730,11 +695,8 @@ router.post('/prices/reject', requireAuth, async (req: AuthRequest, res: Respons
 });
 
 // DELETE /api/pricing-ai/prices/:id
-router.delete('/prices/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.delete('/prices/:id', async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { id } = req.params;
     await adminDb.collection('pricing_ai_price_observations').doc(id).delete();

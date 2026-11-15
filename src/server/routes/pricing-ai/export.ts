@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { requireAuth, AuthRequest } from '../../../middleware/auth.ts';
+import { requireAdmin, AuthRequest } from '../../../middleware/auth.ts';
 
 const router = Router();
 
@@ -9,11 +9,8 @@ const router = Router();
  * Expects: { spreadsheetId: string, products: any[] }
  * Headers: { Authorization: Bearer <ID_TOKEN>, 'x-workspace-token': <ACCESS_TOKEN> }
  */
-router.post('/sheets', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/sheets', requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user?.email !== 'omralabis@gmail.com') {
-      return res.status(403).json({ error: 'صلاحيات غير كافية.' });
-    }
 
     const { spreadsheetId, products } = req.body;
     const workspaceToken = req.headers['x-workspace-token'] as string;

@@ -130,9 +130,23 @@ describe('Amazon Duaa Firestore Security Rules Tests', () => {
     }));
   });
 
-  it('4c. Admin user can manage users and roles', async () => {
-    const adminDb = testEnv.authenticatedContext('adminUser', { email: 'omralabis@gmail.com' }).firestore();
+  it('4c. Admin user with verified email can manage users and roles', async () => {
+    const adminDb = testEnv.authenticatedContext('adminUser', {
+      email: 'omralabis@gmail.com',
+      email_verified: true
+    }).firestore();
     await assertSucceeds(adminDb.collection('users').doc('userB').set({
+      email: 'userB@example.com',
+      role: 'admin'
+    }));
+  });
+
+  it('4d. Unverified admin email cannot bypass admin authorization', async () => {
+    const unverifiedAdminDb = testEnv.authenticatedContext('spoofAdmin', {
+      email: 'omralabis@gmail.com',
+      email_verified: false
+    }).firestore();
+    await assertFails(unverifiedAdminDb.collection('users').doc('userB').set({
       email: 'userB@example.com',
       role: 'admin'
     }));

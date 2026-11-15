@@ -124,6 +124,16 @@ export function saveStoredOrders(orders: Order[]): void {
 }
 
 const ADMIN_TOKEN_KEY = 'amazon_duaa_admin_token_v1';
+let cachedFirebaseIdToken: string | null = null;
+let firebaseTokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setFirebaseIdToken(token: string | null): void {
+  cachedFirebaseIdToken = token && token !== 'undefined' && token !== 'null' ? token : null;
+}
+
+export function registerFirebaseTokenProvider(provider: () => Promise<string | null>): void {
+  firebaseTokenProvider = provider;
+}
 
 export function getAdminToken(): string | null {
   try {
@@ -168,11 +178,26 @@ export function clearAdminSession(): void {
 }
 
 export function getAuthHeaders(): Record<string, string> {
-  const token = getAdminToken();
-  if (token) {
+  const token = cachedFirebaseIdToken || getAdminToken();
+  if (token && token !== 'undefined' && token !== 'null') {
     return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+export async function getAuthHeadersAsync(): Promise<Record<string, string>> {
+  if (firebaseTokenProvider) {
+    try {
+      const freshToken = await firebaseTokenProvider();
+      if (freshToken && freshToken !== 'undefined' && freshToken !== 'null') {
+        cachedFirebaseIdToken = freshToken;
+        return { Authorization: `Bearer ${freshToken}` };
+      }
+    } catch {
+      // Fall back to cached Firebase ID token or admin HMAC token
+    }
+  }
+  return getAuthHeaders();
 }
 
 export function resetToDefaults(): void {

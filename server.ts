@@ -11,11 +11,13 @@ import {
   requireStaffOrAdmin,
   requireDriverOrStaffOrAdmin,
   createAdminToken,
-  verifyAdminToken,
+  getAdminJwtSecret,
+  resolveAuthenticatedUser,
+  hasRole,
   AuthRequest,
 } from './src/middleware/auth.ts';
-import { getOrCreateUser, getUserByUid } from './src/db/users.ts';
-import { getAllProducts, upsertProduct, deleteProductFromDb, updateProductStockInDb } from './src/db/products.ts';
+import { getOrCreateUser } from './src/db/users.ts';
+import { getAllProducts, getProductById, upsertProduct, deleteProductFromDb, updateProductStockInDb } from './src/db/products.ts';
 import { getAllOrders, getOrderByNumber, createOrderInDb, updateOrderStatusInDb, assignDriverInDb, updateDeliveryStatusInDb } from './src/db/orders.ts';
 import { getReviewsForProduct, createReviewInDb } from './src/db/reviews.ts';
 import { db, isPostgresConfigured } from './src/db/index.ts';
@@ -104,8 +106,15 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
       });
     }
 
-    const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
-    const expectedPassword = process.env.ADMIN_PASSWORD || 'admin';
+    const expectedUsername = process.env.ADMIN_USERNAME?.trim();
+    const expectedPassword = process.env.ADMIN_PASSWORD;
+    const jwtSecret = getAdminJwtSecret();
+
+    if (!expectedUsername || !expectedPassword || !jwtSecret) {
+      return res.status(503).json({
+        error: 'تعذر تسجيل الدخول: لم يتم تكوين متغيرات البيئة المطلوبة للإدارة (ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_JWT_SECRET).',
+      });
+    }
 
     const isUserValid = timingSafeEqualStrings(String(username).trim(), expectedUsername);
     const isPassValid = timingSafeEqualStrings(String(password), expectedPassword);
@@ -121,7 +130,6 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
           username: String(username).trim(),
           displayName: 'مدير المتجر',
           role: 'superadmin',
-          email: 'omralabis@gmail.com',
         },
       });
     }
@@ -148,15 +156,15 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
 
 // Admin Session Verification Endpoint
 app.get('/api/admin/verify', requireAuth, (req: AuthRequest, res: Response) => {
-  if (req.user?.role === 'admin' || req.user?.email?.toLowerCase() === 'omralabis@gmail.com') {
+  if (hasRole(req.user, ['admin'])) {
     return res.json({
       ok: true,
       user: {
-        id: req.user.uid,
-        username: req.user.username || 'admin',
-        displayName: req.user.displayName || 'مدير المتجر',
+        id: req.user!.uid,
+        username: req.user!.username || 'admin',
+        displayName: req.user!.displayName || 'مدير المتجر',
         role: 'superadmin',
-        email: req.user.email || 'omralabis@gmail.com',
+        email: req.user!.email,
       },
     });
   }
@@ -216,7 +224,7 @@ app.patch('/api/db/users/:email/role', requireAdmin, async (req: AuthRequest, re
     const { email } = req.params;
     const { role } = req.body;
     
-    if (!['staff', 'user', 'admin'].includes(role)) {
+    if (!['staff', 'user', 'customer', 'driver', 'admin'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
     
@@ -424,8 +432,8 @@ app.get('/api/db/orders', requireAuth, async (req: AuthRequest, res: Response) =
       return res.status(401).json({ error: 'Unauthorized: Authentication required' });
     }
 
-    // 1. Admin or Staff (and sovereign owner omralabis@gmail.com): full access to store orders
-    if (user.role === 'admin' || user.role === 'staff' || user.email?.toLowerCase() === 'omralabis@gmail.com') {
+    // 1. Admin or Staff (RBAC): full access to store orders
+    if (hasRole(user, ['admin', 'staff'])) {
       return res.json(ordersList);
     }
 
@@ -461,22 +469,9 @@ app.get('/api/db/orders/:orderNumber', async (req: Request, res: Response) => {
     let authUser: any = null;
     if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.split('Bearer ')[1]?.trim();
-      authUser = verifyAdminToken(token);
-      if (!authUser && token && token !== 'undefined') {
+      if (token) {
         try {
-          const decoded = await adminAuth.verifyIdToken(token);
-          let role = decoded.email?.toLowerCase() === 'omralabis@gmail.com' ? 'admin' : 'customer';
-          if (role !== 'admin') {
-            const dbUser = await getUserByUid(decoded.uid);
-            if (dbUser && (dbUser.role === 'admin' || dbUser.role === 'staff' || dbUser.role === 'driver')) {
-              role = dbUser.role;
-            }
-          }
-          authUser = {
-            uid: decoded.uid,
-            email: decoded.email,
-            role,
-          };
+          authUser = await resolveAuthenticatedUser(token);
         } catch {
           // Token verification failed
         }
@@ -493,8 +488,8 @@ app.get('/api/db/orders/:orderNumber', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'الطلب غير موجود' });
     }
 
-    // 1. Admin or Staff: full order access
-    if (authUser && (authUser.role === 'admin' || authUser.role === 'staff' || authUser.email?.toLowerCase() === 'omralabis@gmail.com')) {
+    // 1. Admin or Staff (RBAC): full order access
+    if (hasRole(authUser, ['admin', 'staff'])) {
       return res.json(order);
     }
 
@@ -717,15 +712,65 @@ app.get('/api/db/reviews/:productId', async (req, res) => {
   }
 });
 
-app.post('/api/db/reviews/:productId', async (req, res) => {
+app.post('/api/db/reviews/:productId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { productId } = req.params;
-    const reviewData = req.body;
-    if (!reviewData || !reviewData.author || !reviewData.rating || !reviewData.comment) {
-      return res.status(400).json({ error: 'author, rating and comment are required' });
+    const cleanProductId = String(req.params.productId || '').trim();
+    if (!cleanProductId || cleanProductId.length > 128) {
+      return res.status(400).json({ error: 'معرّف المنتج غير صالح.' });
     }
-    const saved = await createReviewInDb(productId, reviewData);
-    return res.json(saved);
+
+    const existingProduct = await getProductById(cleanProductId);
+    if (!existingProduct) {
+      return res.status(404).json({ error: 'المنتج غير موجود.' });
+    }
+
+    const body = req.body || {};
+    const sanitizeText = (val: unknown) =>
+      typeof val === 'string' ? val.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '';
+
+    const author = sanitizeText(body.author || req.user?.displayName || '');
+    const comment = sanitizeText(body.comment);
+    const title = body.title !== undefined && body.title !== null ? sanitizeText(body.title) : undefined;
+    const rawRating = Number(body.rating);
+
+    if (!author || author.length < 2 || author.length > 80) {
+      return res.status(400).json({ error: 'اسم كاتب التقييم يجب أن يكون بين 2 و 80 حرفاً.' });
+    }
+    if (!Number.isFinite(rawRating) || rawRating < 1 || rawRating > 5) {
+      return res.status(400).json({ error: 'التقييم يجب أن يكون رقماً صحيحاً بين 1 و 5.' });
+    }
+    if (!comment || comment.length < 5 || comment.length > 1000) {
+      return res.status(400).json({ error: 'نص التقييم يجب أن يكون بين 5 و 1000 حرف.' });
+    }
+    if (title !== undefined && title.length > 120) {
+      return res.status(400).json({ error: 'عنوان التقييم يجب ألا يتجاوز 120 حرفاً.' });
+    }
+
+    // Determine verifiedPurchase server-side from user orders (do not trust client flag)
+    let isVerifiedPurchase = false;
+    if (req.user?.email) {
+      try {
+        const allOrders = await getAllOrders();
+        isVerifiedPurchase = allOrders.some(
+          (o: any) =>
+            o.customerEmail?.toLowerCase() === req.user!.email!.toLowerCase() &&
+            Array.isArray(o.items) &&
+            o.items.some((it: any) => (it.product_id || it.productId || it.product?.id) === cleanProductId)
+        );
+      } catch {
+        isVerifiedPurchase = false;
+      }
+    }
+
+    const saved = await createReviewInDb(cleanProductId, {
+      author,
+      rating: Math.round(rawRating),
+      comment,
+      date: new Date().toISOString().split('T')[0],
+      verifiedPurchase: isVerifiedPurchase,
+      ...(title ? { title } : {}),
+    });
+    return res.status(201).json(saved);
   } catch (error: any) {
     console.error('Failed to create review in Cloud SQL:', error);
     return res.status(500).json({ error: error.message || 'Failed to create review' });
@@ -1276,144 +1321,6 @@ export const TrustBadgesBar: React.FC = () => {
 - أرسل لي كود نافذة منبثقة تفاعلية للمشتريات الحديثة
 - أرسل لي كود إضافة حاسبة توفير عروض الباقات (Bundle Savings)`;
 }
-
-// Pricing AI Endpoints - Staff/Admin only
-app.get('/api/pricing-ai/conversations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const snapshot = await adminDb.collection('pricing_ai_conversations').orderBy('updatedAt', 'desc').get();
-    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (list.length === 0) {
-      const defaultConv = { id: 'conv-1', title: 'جلسة تسعير ذكية أولى', updatedAt: new Date().toISOString() };
-      return res.json([defaultConv]);
-    }
-    return res.json(list);
-  } catch (e) {
-    return res.json([{ id: 'conv-1', title: 'جلسة تسعير ذكية (افتراضية)', updatedAt: new Date().toISOString() }]);
-  }
-});
-
-app.post('/api/pricing-ai/conversations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { title } = req.body;
-    const newConv = { title: title || 'جلسة جديدة', updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
-    const docRef = await adminDb.collection('pricing_ai_conversations').add(newConv);
-    return res.json({ id: docRef.id, ...newConv });
-  } catch (e) {
-    const fallbackId = 'conv-' + Date.now();
-    return res.json({ id: fallbackId, title: req.body?.title || 'جلسة جديدة', updatedAt: new Date().toISOString() });
-  }
-});
-
-app.get('/api/pricing-ai/conversations/:id/messages', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const snapshot = await adminDb.collection('pricing_ai_messages').where('conversationId', '==', id).orderBy('createdAt', 'asc').get();
-    const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (messages.length === 0) {
-      return res.json([
-        { id: 'm-1', role: 'model', content: 'أهلاً بك في مستشار التسعير الذكي (Pricing AI). كيف يمكنني مساعدتك في تحليل أسعار الموردين وهامش الربح اليوم؟', createdAt: new Date().toISOString() }
-      ]);
-    }
-    return res.json(messages);
-  } catch (e) {
-    return res.json([
-      { id: 'm-1', role: 'model', content: 'أهلاً بك في مستشار التسعير الذكي (Pricing AI). جاهز لتحليل الأسعار والتكاليف فوراً.', createdAt: new Date().toISOString() }
-    ]);
-  }
-});
-
-app.post('/api/pricing-ai/conversations/:id/messages', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { message, attachment } = req.body;
-    
-    const userMsg = { conversationId: id, role: 'user', content: message, attachment, createdAt: new Date().toISOString() };
-    try {
-      await adminDb.collection('pricing_ai_messages').add(userMsg);
-    } catch (fsErr: any) {
-      console.warn('[Pricing AI] adminDb write notice:', fsErr.message);
-    }
-
-    let aiReply = 'بناءً على تحليل البيانات الحالية لأسعار الموردين وتكاليف الاستيراد في منصة أمازون دعاء، فإن هامش الربح المستهدف (35%) مستقر وممتاز. هل ترغب في مقارنة سعر مورد معين؟';
-    if (message.includes('مورد') || message.includes('سعر')) {
-      aiReply = 'قمت بفحص سجلات أسعار الموردين. متوسط التكلفة الحالية يمنحنا مرونة تنافسية عالية في السوق اليمني.';
-    }
-
-    const aiMsg = { conversationId: id, role: 'model', content: aiReply, createdAt: new Date().toISOString() };
-    let msgId = 'm-' + Date.now();
-    try {
-      const docRef = await adminDb.collection('pricing_ai_messages').add(aiMsg);
-      msgId = docRef.id;
-    } catch (fsErr: any) {
-      console.warn('[Pricing AI] adminDb aiMsg write notice:', fsErr.message);
-    }
-
-    return res.json({ id: msgId, ...aiMsg });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message || 'فشل إرسال الرسالة' });
-  }
-});
-
-app.get('/api/pricing-ai/suppliers', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const snapshot = await adminDb.collection('supplier_ai_suppliers').get();
-    const suppliers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (suppliers.length === 0) {
-      return res.json([
-        { id: 'sup-1', businessName: 'مؤسسة الوادي للاستيراد والتجارة', whatsappPhone: '+967777000000', city: 'صنعاء', country: 'اليمن' },
-        { id: 'sup-2', businessName: 'مكتب الشفاء لمستحضرات التجميل', whatsappPhone: '+967733000000', city: 'عدن', country: 'اليمن' }
-      ]);
-    }
-    return res.json(suppliers);
-  } catch (e) {
-    return res.json([
-      { id: 'sup-1', businessName: 'مؤسسة الوادي للاستيراد والتجارة', whatsappPhone: '+967777000000', city: 'صنعاء', country: 'اليمن' }
-    ]);
-  }
-});
-
-app.post('/api/pricing-ai/suppliers', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const data = req.body;
-    let newId = 'sup-' + Date.now();
-    try {
-      const docRef = await adminDb.collection('supplier_ai_suppliers').add({ ...data, createdAt: new Date().toISOString() });
-      newId = docRef.id;
-    } catch (fsErr: any) {
-      console.warn('[Pricing AI] adminDb supplier write notice:', fsErr.message);
-    }
-    return res.json({ id: newId, ...data });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message || 'فشل حفظ المورد' });
-  }
-});
-
-app.get('/api/pricing-ai/suppliers/:id/prices', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const snapshot = await adminDb.collection('supplier_ai_price_observations').where('supplierId', '==', id).get();
-    const prices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return res.json(prices);
-  } catch (e) {
-    return res.json([]);
-  }
-});
-
-app.get('/api/pricing-ai/prices/observations', requireStaffOrAdmin, async (req: AuthRequest, res) => {
-  try {
-    const snapshot = await adminDb.collection('supplier_ai_price_observations').get();
-    const obs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (obs.length === 0) {
-      return res.json([
-        { id: 'obs-1', productName: 'سيروم الحلزون الكوري 100 مل', supplierCost: 4500, currency: 'YER', status: 'approved', observedAt: new Date().toISOString() },
-        { id: 'obs-2', productName: 'كريم ترطيب سنتيلا الأخضر', supplierCost: 3200, currency: 'YER', status: 'pending', observedAt: new Date().toISOString() }
-      ]);
-    }
-    return res.json(obs);
-  } catch (e) {
-    return res.json([]);
-  }
-});
 
 // AI Developer & Code Consultant for Platform Development
 // Admin Auth Check

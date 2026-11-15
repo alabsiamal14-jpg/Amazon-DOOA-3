@@ -1,6 +1,7 @@
 import { db, isPostgresConfigured } from './index.ts';
 import { users } from './schema.ts';
 import { eq } from 'drizzle-orm';
+import { adminDb } from '../lib/firebase-admin.ts';
 
 type DbUserRow = typeof users.$inferSelect;
 const memoryUsers = new Map<string, DbUserRow>();
@@ -52,7 +53,27 @@ export async function getOrCreateUser(uid: string, email: string, displayName?: 
 
 export async function getUserByUid(uid: string) {
   if (!isPostgresConfigured) {
-    return memoryUsers.get(uid) || null;
+    const mem = memoryUsers.get(uid);
+    if (mem) return mem;
+    try {
+      const snap = await adminDb.collection('users').doc(uid).get();
+      if (snap.exists) {
+        const d = snap.data() || {};
+        const row: DbUserRow = {
+          id: memoryUserIdCounter++,
+          uid,
+          email: d.email || '',
+          displayName: d.name || d.displayName || null,
+          role: d.role || 'customer',
+          createdAt: d.createdAt ? new Date(d.createdAt) : new Date(),
+        };
+        memoryUsers.set(uid, row);
+        return row;
+      }
+    } catch {
+      // Ignore if adminDb lacks IAM in sandbox
+    }
+    return null;
   }
   try {
     const userRecords = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
@@ -63,7 +84,16 @@ export async function getUserByUid(uid: string) {
   }
 }
 
-export async function updateUserRole(uid: string, role: 'admin' | 'staff' | 'user') {
+export async function updateUserRole(uid: string, role: 'admin' | 'staff' | 'driver' | 'user' | 'customer') {
+  try {
+    await adminDb.collection('users').doc(uid).set(
+      { role, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch {
+    // Non-fatal in sandbox without FIREBASE_SERVICE_ACCOUNT
+  }
+
   if (!isPostgresConfigured) {
     const existing = memoryUsers.get(uid);
     if (!existing) return null;
@@ -83,6 +113,25 @@ export async function getUserByEmail(email: string) {
   if (!isPostgresConfigured) {
     for (const u of memoryUsers.values()) {
       if (u.email.toLowerCase() === email.toLowerCase()) return u;
+    }
+    try {
+      const snap = await adminDb.collection('users').where('email', '==', email.trim()).limit(1).get();
+      if (!snap.empty) {
+        const docSnap = snap.docs[0];
+        const d = docSnap.data() || {};
+        const row: DbUserRow = {
+          id: memoryUserIdCounter++,
+          uid: docSnap.id,
+          email: d.email || email,
+          displayName: d.name || d.displayName || null,
+          role: d.role || 'customer',
+          createdAt: d.createdAt ? new Date(d.createdAt) : new Date(),
+        };
+        memoryUsers.set(docSnap.id, row);
+        return row;
+      }
+    } catch {
+      // Ignore if adminDb lacks IAM in sandbox
     }
     return null;
   }

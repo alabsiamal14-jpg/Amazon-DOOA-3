@@ -17,8 +17,7 @@ import {
   Percent,
   CheckSquare,
 } from 'lucide-react';
-import { auth } from '../lib/firebase.ts';
-import { getAdminToken } from '../lib/storage.ts';
+import { getAuthHeadersAsync } from '../lib/storage.ts';
 import { SupplierImportResult } from '../features/whatsapp-supplier-ai/types/index.ts';
 
 export const WhatsAppSupplierDashboard: React.FC = () => {
@@ -112,8 +111,8 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     }, 1500);
 
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) {
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) {
         throw new Error('يرجى تسجيل الدخول كمسؤول للنظام للتمكن من معالجة البيانات.');
       }
 
@@ -124,9 +123,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
 
       const res = await fetch('/api/whatsapp-supplier-ai/analyze', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: authHeaders,
         body: formData,
       });
 
@@ -204,8 +201,8 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const token = (await auth.currentUser?.getIdToken()) || getAdminToken();
-      if (!token) {
+      const authHeaders = await getAuthHeadersAsync();
+      if (!authHeaders.Authorization) {
         throw new Error('يرجى تسجيل الدخول أولاً كمسؤول.');
       }
 
@@ -228,7 +225,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          ...authHeaders,
         },
         body: JSON.stringify(postBody),
       });

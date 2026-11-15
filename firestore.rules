@@ -2,33 +2,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // دالة للتحقق من البريد الموثق للمالك السيادي
+    function isSovereignAdmin() {
+      return request.auth != null
+        && ('email' in request.auth.token)
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == 'omralabis@gmail.com';
+    }
+
+    // قراءة الدور من وثيقة المستخدم (RBAC)
+    function userHasRole(roles) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in roles;
+    }
+
     // دالة للتحقق من صلاحية المدير (Admin)
     function isAdmin() {
-      return request.auth != null && (
-        request.auth.token.email.lower() == 'omralabis@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+      return isSovereignAdmin() || userHasRole(['admin']);
     }
 
     // دالة للتحقق من صلاحية الموظف (Staff)
     function isStaff() {
-      return request.auth != null && (
-        request.auth.token.email.lower() == 'omralabis@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff' || 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
-      );
+      return isSovereignAdmin() || userHasRole(['admin', 'staff']);
     }
 
     // دالة للتحقق من صلاحية مندوب التوصيل (Driver)
     function isDriver() {
-      return request.auth != null && (
-        request.auth.token.email.lower() == 'omralabis@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver' || 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
-      );
+      return isSovereignAdmin() || userHasRole(['admin', 'driver']);
     }
 
     // Admins: تقييد الوصول لقائمة المدراء بالمدراء المعتمدين فقط

@@ -30,6 +30,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 }) => {
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
+  const [appliedCouponCode, setAppliedCouponCode] = useState<string | undefined>(undefined);
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [couponError, setCouponError] = useState('');
 
@@ -66,21 +67,34 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setCouponError('');
     const code = couponCode.trim().toUpperCase();
 
-    if (code === 'BEAUTY10') {
+    if (code === 'BEAUTY10' || code === 'DUAA10') {
       const discount = Math.round(subtotal * 0.1);
       setCouponDiscount(discount);
-      setAppliedCoupon('BEAUTY10 (خصم 10%)');
+      setAppliedCouponCode(code);
+      setAppliedCoupon(`${code} (خصم 10%)`);
+    } else if (code === 'AMAZON15') {
+      const discount = Math.round(subtotal * 0.15);
+      setCouponDiscount(discount);
+      setAppliedCouponCode(code);
+      setAppliedCoupon('AMAZON15 (خصم 15%)');
+    } else if (code === 'BEAUTY20') {
+      const discount = Math.round(subtotal * 0.2);
+      setCouponDiscount(discount);
+      setAppliedCouponCode(code);
+      setAppliedCoupon('BEAUTY20 (خصم 20%)');
     } else if (code === 'WELCOME') {
       const discount = Math.min(20, subtotal);
       setCouponDiscount(discount);
+      setAppliedCouponCode('WELCOME');
       setAppliedCoupon('WELCOME (خصم 20 ريال)');
     } else {
-      setCouponError('رمز الكوبون غير صالح. جرب BEAUTY10 أو WELCOME');
+      setCouponError('رمز الكوبون غير صالح. جرب BEAUTY10 أو DUAA10 أو WELCOME');
     }
   };
 
   const handleRemoveCoupon = () => {
     setAppliedCoupon(null);
+    setAppliedCouponCode(undefined);
     setCouponDiscount(0);
     setCouponCode('');
   };
@@ -111,6 +125,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       })),
       subtotal,
       discount_amount: couponDiscount,
+      coupon_code: appliedCouponCode,
       delivery_fee: deliveryFee,
       total_amount: grandTotal,
       status: 'pending',

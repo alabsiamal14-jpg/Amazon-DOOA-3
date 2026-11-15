@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, X, Sparkles, AlertCircle, ShoppingBag, ArrowUpRight, Copy, Check, RefreshCw } from 'lucide-react';
 import { Product, Order, StoreSettings } from '../types';
-import { getAuthHeaders } from '../lib/storage';
+import { getAuthHeadersAsync } from '../lib/storage';
 
 interface AdminCopilotModalProps {
   isOpen: boolean;
@@ -89,7 +89,7 @@ export const AdminCopilotModal: React.FC<AdminCopilotModalProps> = ({
 
       const res = await fetch('/api/ai/copilot', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify({
           message: query,
           context: contextData,

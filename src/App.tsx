@@ -16,7 +16,7 @@ import {
   saveStoredWishlist,
   getAdminSession,
   clearAdminSession,
-  getAuthHeaders,
+  getAuthHeadersAsync,
   resetToDefaults,
 } from './lib/storage';
 import {
@@ -122,7 +122,7 @@ export default function App() {
       }
       try {
         const res = await fetch('/api/admin/verify', {
-          headers: getAuthHeaders(),
+          headers: await getAuthHeadersAsync(),
         });
         if (!res.ok) {
           clearAdminSession();
@@ -445,7 +445,7 @@ export default function App() {
           paymentMethod: newOrder.payment_method,
           deliverySpeed: newOrder.delivery_speed,
           items: newOrder.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
-          couponCode: newOrder.discount_amount > 0 ? 'COUPON' : undefined,
+          couponCode: newOrder.coupon_code || undefined,
         }),
       });
 
@@ -460,6 +460,12 @@ export default function App() {
       }
 
       const confirmedOrder: Order = data.order;
+
+      if (data.syncStatus !== 'synced' && currentUser?.uid) {
+        createOrderFirestore(confirmedOrder, currentUser.uid).catch((syncErr) => {
+          console.warn('Client Firestore order mirror notice:', syncErr);
+        });
+      }
 
       // Update state with confirmed order
       setOrders((prev) => {
@@ -503,7 +509,7 @@ export default function App() {
     try {
       const response = await fetch('/api/db/products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify(newProduct),
       });
       if (!response.ok) {
@@ -524,7 +530,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/db/products/${productId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify({ status: 'published' }),
       });
       
@@ -551,12 +557,13 @@ export default function App() {
 
   const handleProductsCreated = async (newProducts: Product[]) => {
     setProducts((prev) => [...newProducts, ...prev]);
+    const authHeaders = await getAuthHeadersAsync();
     for (const p of newProducts) {
       saveProductCloud(p);
       saveProductFirestore(p);
       fetch('/api/db/products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify(p),
       }).catch(() => {});
     }
@@ -571,7 +578,7 @@ export default function App() {
     try {
       await fetch(`/api/db/products/${encodeURIComponent(productId)}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
+        headers: await getAuthHeadersAsync(),
       });
     } catch (err) {
       console.warn('Backend product deletion notice:', err);
@@ -580,6 +587,7 @@ export default function App() {
   };
 
   const handleUpdateStock = async (productId: string, newStock: number) => {
+    const authHeaders = await getAuthHeadersAsync();
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id === productId) {
@@ -588,7 +596,7 @@ export default function App() {
           saveProductFirestore(updated);
           fetch('/api/db/products', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
             body: JSON.stringify(updated),
           }).catch(() => {});
           return updated;
@@ -737,7 +745,7 @@ export default function App() {
       // 1. Post to backend Cloud SQL deduplicate endpoint
       await fetch('/api/db/products/deduplicate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify({ groups }),
       });
     } catch (err) {
@@ -810,7 +818,7 @@ export default function App() {
       try {
         await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/driver`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
           body: JSON.stringify({
             driver_name: driver.driverName,
             driver_phone: driver.driverPhone,
@@ -869,7 +877,7 @@ export default function App() {
       try {
         await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/delivery`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
           body: JSON.stringify({
             status,
             ...extraData,
@@ -920,7 +928,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/db/users/${email}/role`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify({ role }),
       });
       

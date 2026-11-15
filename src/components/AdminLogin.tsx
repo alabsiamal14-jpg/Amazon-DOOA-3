@@ -13,7 +13,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
   onLoginSuccess,
   onBackToStore,
 }) => {
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -89,7 +89,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full text-sm p-3 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden disabled:opacity-50"
-              placeholder="admin"
+              placeholder="اسم مستخدم الإدارة"
             />
           </div>
 

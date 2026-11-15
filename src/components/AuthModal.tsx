@@ -123,12 +123,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Quick fill helper for admin email input without bypassing auth
+  // Switch cleanly to login mode without pre-filling any hardcoded credentials
   const handleQuickAdminFill = () => {
-    setEmail('omralabis@gmail.com');
-    setPassword('admin123456');
+    setEmail('');
+    setPassword('');
     setMode('login');
     resetFields();
+    setSuccessMessage('يرجى إدخال بريدك الإداري وكلمة المرور يدوياً أو المتابعة عبر حساب Google.');
   };
 
   return (

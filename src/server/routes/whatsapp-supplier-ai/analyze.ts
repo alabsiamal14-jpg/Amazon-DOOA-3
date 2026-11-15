@@ -50,14 +50,6 @@ router.post(['/analyze', '/'], requireAdmin, (req: AuthRequest, res: Response, n
 }, async (req: AuthRequest, res: Response) => {
   const filePath = req.file?.path;
 
-  // Admin authorization check (normalized)
-  const userEmail = (req.user?.email || '').toLowerCase().trim();
-  const allowedAdmin = 'omralabis@gmail.com';
-  if (userEmail && userEmail !== allowedAdmin && process.env.NODE_ENV === 'production') {
-    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    return res.status(403).json({ error: 'صلاحيات غير كافية: هذا الإجراء مخصص لمدير النظام فقط.' });
-  }
-
   if (!filePath) {
     return res.status(400).json({ error: 'لم يتم استلام أي فيديو لتحليله.' });
   }
