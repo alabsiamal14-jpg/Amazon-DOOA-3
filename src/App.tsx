@@ -7,6 +7,10 @@ import { Product, StoreSettings, CartItem, Order, OrderStatus, AdminUser } from 
 import { INITIAL_CATEGORIES } from './data/initialData';
 import {
   getStoredProducts,
+  saveStoredProducts,
+  upsertStoredProduct,
+  upsertStoredProducts,
+  removeStoredProduct,
   getStoredOrders,
   getStoredSettings,
   saveStoredSettings,
@@ -47,6 +51,7 @@ import {
   updateOrderDriverFirestore,
 } from './lib/firebase';
 import { AuthModal } from './components/AuthModal';
+import { PublicAddProductModal } from './components/PublicAddProductModal';
 import { OfflineStatusIndicator } from './components/OfflineStatusIndicator';
 import { StaffDashboard } from './components/StaffDashboard';
 import { DriverPortal } from './components/DriverPortal';
@@ -100,6 +105,27 @@ export default function App() {
   // Firebase User & Auth State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isPublicAddProductOpen, setIsPublicAddProductOpen] = useState(false);
+
+  const handleProductAdded = (newProduct: Product) => {
+    upsertStoredProduct(newProduct);
+    setProducts((prev) => {
+      const exists = prev.some((p) => p.id === newProduct.id);
+      return exists ? prev.map((p) => (p.id === newProduct.id ? newProduct : p)) : [newProduct, ...prev];
+    });
+    saveProductCloud(newProduct).catch(() => {});
+    getAuthHeadersAsync()
+      .then((authHeaders) => {
+        if (!authHeaders.Authorization) return;
+        return fetch('/api/db/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify(newProduct),
+        });
+      })
+      .catch(() => {});
+    showToast('تم نشر منتجك بنجاح في المتجر!');
+  };
 
   // References for Real-Time Cart Listener and Guest Cart Merging
   const cartUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -161,51 +187,126 @@ export default function App() {
     }, 3500);
   };
 
-  // Initial load from Firebase Firestore with cloud/local fallback
+  // Initial load from Firebase Firestore + server DB in parallel for fast, resilient mobile refresh
   useEffect(() => {
-    async function loadData() {
-      // 1. Products: Fetch from Firebase Firestore, with Cloud SQL & local resilient fallbacks
-      const fsResult = await fetchProductsFirestore();
-      if (fsResult.products && fsResult.products.length > 0) {
-        setProducts(fsResult.products);
-      } else {
-        try {
-          const sqlRes = await fetch('/api/db/products');
-          if (sqlRes.ok) {
-            const sqlProds = await sqlRes.json();
-            if (Array.isArray(sqlProds) && sqlProds.length > 0) {
-              const mapped: Product[] = sqlProds.map((sp: any) => ({
-                id: sp.productId || String(sp.id),
-                title_ar: sp.titleAr,
-                description_ar: sp.descriptionAr || '',
-                original_price: Number(sp.originalPrice),
-                discount_price: sp.discountPrice !== null && sp.discountPrice !== undefined ? Number(sp.discountPrice) : null,
-                stock_quantity: Number(sp.stockQuantity ?? 10),
-                category_id: sp.categoryId || 'skincare',
-                category_name: sp.categoryName || 'عناية بالبشرة',
-                tags: sp.tags || [],
-                image_url: sp.imageUrl || 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
-                rating: Number(sp.rating ?? 5.0),
-                reviews_count: Number(sp.reviewsCount ?? 1),
-                ai_generated: Boolean(sp.aiGenerated),
-                featured: Boolean(sp.featured),
-                status: sp.status || 'published',
-                creator_id: sp.creatorId,
-                created_at: sp.createdAt ? new Date(sp.createdAt).toISOString() : new Date().toISOString(),
-              }));
-              setProducts(mapped);
-              return;
-            }
-          }
-        } catch (sqlErr) {
-          console.warn('Could not fetch products from Cloud SQL fallback:', sqlErr);
-        }
+    let cancelled = false;
 
+    const mapServerProduct = (sp: any): Product => ({
+      id: sp.productId || sp.id || String(sp.id),
+      title_ar: sp.titleAr || sp.title_ar,
+      description_ar: sp.descriptionAr || sp.description_ar || '',
+      original_price: Number(sp.originalPrice ?? sp.original_price ?? 50),
+      discount_price:
+        sp.discountPrice !== null && sp.discountPrice !== undefined
+          ? Number(sp.discountPrice)
+          : sp.discount_price !== null && sp.discount_price !== undefined
+            ? Number(sp.discount_price)
+            : null,
+      stock_quantity: Number(sp.stockQuantity ?? sp.stock_quantity ?? 10),
+      category_id: sp.categoryId || sp.category_id || 'skincare',
+      category_name: sp.categoryName || sp.category_name || 'عناية بالبشرة',
+      tags: Array.isArray(sp.tags) ? sp.tags : [],
+      image_url:
+        sp.imageUrl ||
+        sp.image_url ||
+        'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
+      gallery_images: Array.isArray(sp.galleryImages)
+        ? sp.galleryImages
+        : Array.isArray(sp.gallery_images)
+          ? sp.gallery_images
+          : undefined,
+      size_or_volume: sp.sizeOrVolume || sp.size_or_volume || undefined,
+      skin_type: sp.skinType || sp.skin_type || undefined,
+      key_benefits: Array.isArray(sp.keyBenefits)
+        ? sp.keyBenefits
+        : Array.isArray(sp.key_benefits)
+          ? sp.key_benefits
+          : undefined,
+      how_to_use: sp.howToUse || sp.how_to_use || undefined,
+      ingredients: sp.ingredients || undefined,
+      badge: sp.badge || undefined,
+      rating: Number(sp.rating ?? 5.0),
+      reviews_count: Number(sp.reviewsCount ?? sp.reviews_count ?? 1),
+      ai_generated: Boolean(sp.aiGenerated ?? sp.ai_generated),
+      featured: Boolean(sp.featured),
+      status: sp.status === 'draft' ? 'draft' : 'published',
+      creator_id: sp.creatorId || sp.creator_id,
+      contact_phone: sp.contactPhone || sp.contact_phone || undefined,
+      created_at: sp.createdAt
+        ? new Date(sp.createdAt).toISOString()
+        : sp.created_at
+          ? new Date(sp.created_at).toISOString()
+          : new Date().toISOString(),
+    });
+
+    const mergeAndSortCatalog = (primary: Product[], secondary: Product[]): Product[] => {
+      const byId = new Map<string, Product>();
+      for (const p of primary) {
+        if (p?.id) byId.set(p.id, p);
+      }
+      for (const p of secondary) {
+        if (p?.id && !byId.has(p.id)) {
+          byId.set(p.id, p);
+        }
+      }
+      return Array.from(byId.values()).sort((a, b) => {
+        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return (Number.isFinite(tB) ? tB : 0) - (Number.isFinite(tA) ? tA : 0);
+      });
+    };
+
+    async function loadData() {
+      const serverPromise: Promise<Product[]> = fetch('/api/db/products?fresh=1', {
+        cache: 'no-store',
+      })
+        .then(async (res) => {
+          if (!res.ok) return [];
+          const sqlProds = await res.json();
+          if (!Array.isArray(sqlProds)) return [];
+          const mapped = sqlProds.map(mapServerProduct).filter((p) => p.id && p.title_ar);
+          if (!cancelled && mapped.length > 0) {
+            setProducts((prev) => mergeAndSortCatalog(mapped, prev));
+          }
+          return mapped;
+        })
+        .catch((err) => {
+          console.warn('Could not fetch products from /api/db/products:', err);
+          return [];
+        });
+
+      const fsPromise = fetchProductsFirestore();
+
+      const [fsOutcome, serverOutcome] = await Promise.allSettled([fsPromise, serverPromise]);
+      if (cancelled) return;
+
+      const fsProducts =
+        fsOutcome.status === 'fulfilled' && fsOutcome.value?.isFirebase
+          ? fsOutcome.value.products
+          : [];
+      const serverProducts = serverOutcome.status === 'fulfilled' ? serverOutcome.value : [];
+      const localFallback =
+        fsOutcome.status === 'fulfilled' ? fsOutcome.value.products : getStoredProducts();
+
+      const primary = fsProducts.length > 0 ? fsProducts : serverProducts;
+      const secondary = fsProducts.length > 0 ? serverProducts : localFallback;
+      const merged = mergeAndSortCatalog(primary, secondary);
+
+      if (merged.length > 0) {
+        saveStoredProducts(merged);
+        setProducts(merged);
+      } else {
         const pResult = await fetchProductsCloud();
-        setProducts(pResult.products);
+        if (!cancelled) {
+          setProducts(pResult.products);
+        }
       }
     }
+
     loadData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Listen to Firebase Authentication State & Real-Time Cart Listener Lifecycle
@@ -502,27 +603,71 @@ export default function App() {
   };
 
   // Product Admin Handlers
-  const handleProductCreated = async (newProduct: Product) => {
-    setProducts((prev) => [newProduct, ...prev]);
-    await saveProductCloud(newProduct);
-    await saveProductFirestore(newProduct);
+  const persistSingleProduct = async (newProduct: Product): Promise<void> => {
+    let firestoreSaved = false;
+    let serverSaved = false;
+    let lastErrorMessage = '';
+
     try {
-      const response = await fetch('/api/db/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
-        body: JSON.stringify(newProduct),
-      });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || 'فشل حفظ المنتج في قاعدة بيانات الخادم');
+      await saveProductCloud(newProduct);
+    } catch {
+      // Optional cloud mirror
+    }
+
+    try {
+      await saveProductFirestore(newProduct);
+      firestoreSaved = true;
+    } catch (fsErr: any) {
+      lastErrorMessage = fsErr?.message || '';
+      console.warn('Firestore save product notice:', fsErr);
+    }
+
+    try {
+      const authHeaders = await getAuthHeadersAsync();
+      if (authHeaders.Authorization) {
+        const response = await fetch('/api/db/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify(newProduct),
+        });
+        if (response.ok) {
+          serverSaved = true;
+        } else if (!firestoreSaved) {
+          const errData = await response.json().catch(() => ({}));
+          lastErrorMessage = errData.error || lastErrorMessage || 'فشل حفظ المنتج في قاعدة بيانات الخادم';
+        }
       }
-      const successLabel = newProduct.status === 'draft' 
-        ? `تم حفظ "${newProduct.title_ar}" كمسودة بانتظار مراجعة المدير.` 
+    } catch (srvErr: any) {
+      if (!firestoreSaved) {
+        lastErrorMessage = lastErrorMessage || srvErr?.message || 'تعذر الاتصال بخادم المتجر';
+      }
+    }
+
+    if (!firestoreSaved && !serverSaved) {
+      throw new Error(lastErrorMessage || 'تعذر حفظ المنتج في قاعدة البيانات، يرجى المحاولة مرة أخرى.');
+    }
+  };
+
+  const handleProductCreated = async (newProduct: Product) => {
+    upsertStoredProduct(newProduct);
+    setProducts((prev) => {
+      const exists = prev.some((p) => p.id === newProduct.id);
+      return exists ? prev.map((p) => (p.id === newProduct.id ? newProduct : p)) : [newProduct, ...prev];
+    });
+
+    try {
+      await persistSingleProduct(newProduct);
+      const successLabel = newProduct.status === 'draft'
+        ? `تم حفظ "${newProduct.title_ar}" كمسودة بانتظار مراجعة المدير.`
         : `تم نشر "${newProduct.title_ar}" بنجاح في المتجر!`;
       showToast(successLabel, 'success');
     } catch (err: any) {
-      console.error('Failed to save to Cloud SQL:', err);
-      showToast(`خطأ في حفظ المنتج: ${err.message}`, 'error');
+      removeStoredProduct(newProduct.id);
+      setProducts((prev) => prev.filter((p) => p.id !== newProduct.id));
+      const msg = err?.message || 'تعذر حفظ المنتج في قاعدة البيانات';
+      console.error('Failed to save new product:', err);
+      showToast(`خطأ في حفظ المنتج: ${msg}`, 'error');
+      throw err;
     }
   };
 
@@ -536,7 +681,7 @@ export default function App() {
       
       if (!response.ok) throw new Error('فشل تغيير حالة المنتج');
       
-      const updatedProduct = await response.json();
+      await response.json();
       
       // Update local state
       setProducts(prev => prev.map(p => p.id === productId ? { ...p, status: 'published' } : p));
@@ -545,8 +690,9 @@ export default function App() {
       const target = products.find(p => p.id === productId);
       if (target) {
         const updated = { ...target, status: 'published' as const };
+        upsertStoredProduct(updated);
         saveProductCloud(updated);
-        saveProductFirestore(updated);
+        await saveProductFirestore(updated);
       }
       
       showToast('تم نشر المنتج بنجاح وأصبح متاحاً للجمهور الآن ✨', 'success');
@@ -556,25 +702,54 @@ export default function App() {
   };
 
   const handleProductsCreated = async (newProducts: Product[]) => {
-    setProducts((prev) => [...newProducts, ...prev]);
-    const authHeaders = await getAuthHeadersAsync();
-    for (const p of newProducts) {
-      saveProductCloud(p);
-      saveProductFirestore(p);
-      fetch('/api/db/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify(p),
-      }).catch(() => {});
+    if (!newProducts || newProducts.length === 0) return;
+
+    upsertStoredProducts(newProducts);
+    setProducts((prev) => {
+      const incomingIds = new Set(newProducts.map((p) => p.id));
+      return [...newProducts, ...prev.filter((p) => !incomingIds.has(p.id))];
+    });
+
+    const failedIds = new Set<string>();
+    let firstError = '';
+
+    await Promise.all(
+      newProducts.map(async (p) => {
+        try {
+          await persistSingleProduct(p);
+        } catch (err: any) {
+          failedIds.add(p.id);
+          if (!firstError) firstError = err?.message || 'فشل الحفظ';
+        }
+      })
+    );
+
+    if (failedIds.size > 0) {
+      failedIds.forEach((id) => removeStoredProduct(id));
+      setProducts((prev) => prev.filter((p) => !failedIds.has(p.id)));
+      const savedCount = newProducts.length - failedIds.size;
+      if (savedCount === 0) {
+        const msg = `تعذر حفظ المنتجات: ${firstError}`;
+        showToast(msg, 'error');
+        throw new Error(msg);
+      }
+      showToast(`تم حفظ ${savedCount} منتجات وتعذر حفظ ${failedIds.size}: ${firstError}`, 'error');
+      return;
     }
+
     showToast(`تم نشر ${newProducts.length} منتجات بنجاح في المتجر دفعة واحدة!`);
   };
 
   const handleDeleteProduct = async (productId: string) => {
+    removeStoredProduct(productId);
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
     await deleteProductCloud(productId);
-    await deleteProductFirestore(productId);
+    try {
+      await deleteProductFirestore(productId);
+    } catch (err) {
+      console.warn('Firestore product deletion notice:', err);
+    }
     try {
       await fetch(`/api/db/products/${encodeURIComponent(productId)}`, {
         method: 'DELETE',
@@ -1066,6 +1241,7 @@ export default function App() {
             onOpenAdmin={() => setActiveTab('admin')}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
+            onOpenPublicAddProduct={() => setIsPublicAddProductOpen(true)}
           />
         )}
 
@@ -1416,6 +1592,15 @@ export default function App() {
           setCurrentUser(profile);
           showToast(`أهلاً بك يا ${profile.name || 'عزيزنا'}! تم تسجيل الدخول بنجاح ✨`);
         }}
+      />
+
+      {/* Public Add Product Modal (For Visitors without login) */}
+      <PublicAddProductModal
+        isOpen={isPublicAddProductOpen}
+        onClose={() => setIsPublicAddProductOpen(false)}
+        categories={INITIAL_CATEGORIES}
+        settings={settings}
+        onProductAdded={handleProductAdded}
       />
 
       {/* Non-intrusive Offline Status Indicator Banner */}

@@ -23,10 +23,14 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
   const autocompleteInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
 
-  const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyBEYkV_HVYhYucgoIhgeHV1FYlkEckzJLA';
+  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
 
   // Reverse geocodes the coordinates to address via Geocoding REST API (CF5/Section 5 compliant)
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
+    if (!mapsApiKey) {
+      setErrorError('مفتاح خرائط Google غير مضبوط (VITE_GOOGLE_MAPS_API_KEY). يمكنك إدخال العنوان يدوياً.');
+      return;
+    }
     try {
       const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ar&key=${mapsApiKey}`;
       const res = await fetch(url);
@@ -166,6 +170,19 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
       setMapCenter(sa);
     }
   }, [defaultCity]);
+
+  if (!mapsApiKey) {
+    return (
+      <div className="space-y-2 text-xs border border-amber-200 p-3 rounded-2xl bg-amber-50 text-amber-900">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            الخريطة التفاعلية غير مفعّلة لعدم ضبط <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[10px]">VITE_GOOGLE_MAPS_API_KEY</code> في متغيرات البيئة. يرجى إدخال تفاصيل عنوان التوصيل يدوياً أعلاه.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <APIProvider apiKey={mapsApiKey} language="ar" region="SA">

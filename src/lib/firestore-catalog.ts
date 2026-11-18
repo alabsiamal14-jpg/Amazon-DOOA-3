@@ -1,5 +1,5 @@
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
-import { adminDb } from './firebase-admin.ts';
+import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { adminDb, hasAdminServiceAccount } from './firebase-admin.ts';
 import { db as clientDb, withFirestoreTimeout } from './firebase.ts';
 import type { Product } from '../types.ts';
 
@@ -8,11 +8,19 @@ const DEFAULT_FALLBACK_IMAGE =
 
 let cachedCatalog: Product[] | null = null;
 let cachedAt = 0;
-const CATALOG_CACHE_TTL_MS = 15_000;
+const CATALOG_CACHE_TTL_MS = 5_000;
 
 export function invalidateFirestoreCatalogCache(): void {
   cachedCatalog = null;
   cachedAt = 0;
+}
+
+function sortProductsNewestFirst(items: Product[]): Product[] {
+  return [...items].sort((a, b) => {
+    const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return (Number.isFinite(tB) ? tB : 0) - (Number.isFinite(tA) ? tA : 0);
+  });
 }
 
 export function normalizeFirestoreProduct(docId: string, d: Record<string, any>): Product | null {
@@ -79,32 +87,36 @@ export async function fetchFirestoreCatalog(forceRefresh = false): Promise<Produ
     return cachedCatalog;
   }
 
-  // 1. Try Admin SDK first (works in production with FIREBASE_SERVICE_ACCOUNT)
-  try {
-    const snap = await withFirestoreTimeout(adminDb.collection('products').get(), 3000);
-    const items: Product[] = [];
-    snap.forEach((docSnap) => {
-      const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
-      if (normalized) items.push(normalized);
-    });
-    cachedCatalog = items;
-    cachedAt = Date.now();
-    return items;
-  } catch {
-    // Fall back to public-read Client SDK when Admin IAM is unavailable in sandbox
+  // 1. Try Admin SDK first (only when FIREBASE_SERVICE_ACCOUNT is configured)
+  if (hasAdminServiceAccount) {
+    try {
+      const snap = await withFirestoreTimeout(adminDb.collection('products').get(), 8000);
+      const items: Product[] = [];
+      snap.forEach((docSnap) => {
+        const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
+        if (normalized) items.push(normalized);
+      });
+      const sorted = sortProductsNewestFirst(items);
+      cachedCatalog = sorted;
+      cachedAt = Date.now();
+      return sorted;
+    } catch {
+      // Fall back to public-read Client SDK when Admin IAM is unavailable
+    }
   }
 
   // 2. Public-read Client SDK fallback (products has `allow read: if true` in firestore.rules)
   try {
-    const snap = await withFirestoreTimeout(getDocs(collection(clientDb, 'products')), 3500);
+    const snap = await withFirestoreTimeout(getDocs(collection(clientDb, 'products')), 12000);
     const items: Product[] = [];
     snap.forEach((docSnap) => {
       const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
       if (normalized) items.push(normalized);
     });
-    cachedCatalog = items;
+    const sorted = sortProductsNewestFirst(items);
+    cachedCatalog = sorted;
     cachedAt = Date.now();
-    return items;
+    return sorted;
   } catch (err: any) {
     console.warn('[Firestore Catalog] Could not read Firestore products:', err?.message || err);
     return cachedCatalog || [];
@@ -119,14 +131,16 @@ export async function fetchFirestoreProductById(productId: string): Promise<Prod
     if (cached) return cached;
   }
 
-  // 1. Try Admin SDK
-  try {
-    const docSnap = await withFirestoreTimeout(adminDb.collection('products').doc(productId).get(), 2500);
-    if (docSnap.exists) {
-      return normalizeFirestoreProduct(docSnap.id, docSnap.data() || {});
+  // 1. Try Admin SDK when configured
+  if (hasAdminServiceAccount) {
+    try {
+      const docSnap = await withFirestoreTimeout(adminDb.collection('products').doc(productId).get(), 2500);
+      if (docSnap.exists) {
+        return normalizeFirestoreProduct(docSnap.id, docSnap.data() || {});
+      }
+    } catch {
+      // Fall back to public-read Client SDK
     }
-  } catch {
-    // Fall back to public-read Client SDK
   }
 
   // 2. Public-read Client SDK fallback
@@ -154,16 +168,79 @@ export async function updateFirestoreProductStock(productId: string, newStock: n
     return true;
   }
 
+  if (hasAdminServiceAccount) {
+    try {
+      await withFirestoreTimeout(
+        adminDb.collection('products').doc(productId).update({
+          stock_quantity: safeStock,
+          updatedAt: new Date().toISOString(),
+        }),
+        2500
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function syncFirestoreProduct(productId: string, payload: Record<string, any>): Promise<boolean> {
+  if (!productId) return false;
+  invalidateFirestoreCatalogCache();
+
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    return true;
+  }
+
+  // 1. Try Admin SDK first only when explicit service account is configured (or try silently)
+  if (hasAdminServiceAccount) {
+    try {
+      await withFirestoreTimeout(
+        adminDb.collection('products').doc(productId).set(payload, { merge: true }),
+        3500
+      );
+      return true;
+    } catch (adminErr: any) {
+      console.info(`[Firestore Product Sync] Admin SDK skipped for ${productId}: ${adminErr?.message || 'unavailable'}`);
+    }
+  }
+
+  // 2. Fallback to Firebase Web Client SDK (permitted by firestore.rules when title_ar & original_price are valid)
   try {
     await withFirestoreTimeout(
-      adminDb.collection('products').doc(productId).update({
-        stock_quantity: safeStock,
-        updatedAt: new Date().toISOString(),
-      }),
-      2500
+      setDoc(doc(clientDb, 'products', productId), payload, { merge: true }),
+      4000
     );
     return true;
+  } catch (clientErr: any) {
+    console.info(`[Firestore Product Sync] Deferred for ${productId}: ${clientErr?.message || 'offline/restricted'}`);
+    return false;
+  }
+}
+
+export async function deleteFirestoreProduct(productId: string): Promise<boolean> {
+  if (!productId) return false;
+  invalidateFirestoreCatalogCache();
+
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    return true;
+  }
+
+  if (hasAdminServiceAccount) {
+    try {
+      await withFirestoreTimeout(adminDb.collection('products').doc(productId).delete(), 3500);
+      return true;
+    } catch (adminErr: any) {
+      console.info(`[Firestore Product Delete] Admin SDK skipped for ${productId}: ${adminErr?.message || 'unavailable'}`);
+    }
+  }
+
+  try {
+    await withFirestoreTimeout(deleteDoc(doc(clientDb, 'products', productId)), 3500);
+    return true;
   } catch {
+    // Expected in restricted sandbox mode when rules require Firebase Staff Auth (`isStaff()`)
     return false;
   }
 }

@@ -42,7 +42,7 @@ export function createAdminToken(username: string): string {
   }
 
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const exp = Date.now() + 24 * 60 * 60 * 1000; // 24 hours expiry
+  const exp = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days expiry
   const payload = Buffer.from(
     JSON.stringify({
       sub: username,
@@ -103,6 +103,18 @@ export function verifyAdminToken(token: string): AuthUser | null {
   }
 }
 
+function isNonFirebaseJwt(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!header || typeof header !== 'object') return false;
+    return header.alg === 'HS256' || !header.kid;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves either a signed Admin session token or a Firebase ID Token into an RBAC AuthUser.
  * Returns null if the token is invalid or expired.
@@ -116,6 +128,11 @@ export async function resolveAuthenticatedUser(token: string): Promise<AuthUser 
   const adminSession = verifyAdminToken(token);
   if (adminSession) {
     return adminSession;
+  }
+
+  // Never pass expired/unrecognized HS256 admin JWTs or kid-less tokens to Firebase verifyIdToken
+  if (isNonFirebaseJwt(token)) {
+    return null;
   }
 
   // 2. Check Firebase ID Token

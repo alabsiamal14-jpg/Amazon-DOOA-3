@@ -286,14 +286,10 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
     });
   }, [placesLib]);
 
-  const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyBEYkV_HVYhYucgoIhgeHV1FYlkEckzJLA';
+  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
 
-  return (
-    <APIProvider 
-      apiKey={mapsApiKey}
-      language="ar"
-      region="SA"
-    >
+  const content = (
+    <>
       {/* Quota Exceeded Sticky Top Bar (Section 8 Case A Mandate) */}
       {quotaExceeded && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm animate-in slide-in-from-top duration-300">
@@ -460,6 +456,17 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
 
             {/* Map Container Panel (8/12 width) */}
             <div className="lg:col-span-8 h-[550px] lg:h-auto relative bg-stone-100">
+              {!mapsApiKey ? (
+                <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center p-8 text-center bg-stone-50 border-t lg:border-t-0 border-stone-200">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mb-3">
+                    <AlertCircle className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-black text-stone-800 mb-1">خريطة الفروع التفاعلية غير مفعّلة</h3>
+                  <p className="text-xs text-stone-600 max-w-md leading-relaxed">
+                    يرجى ضبط المتغير البيئي <code className="bg-stone-200 px-1.5 py-0.5 rounded font-mono text-[11px]">VITE_GOOGLE_MAPS_API_KEY</code> في إعدادات البيئة لتفعيل خريطة Google Maps. يمكنك تصفح عناوين الفروع والتواصل عبر الواتساب من القائمة الجانبية.
+                  </p>
+                </div>
+              ) : (
               <Map
                 center={mapCenter}
                 zoom={mapZoom}
@@ -555,11 +562,26 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
                   onRouteFailed={(err) => setRouteError(err)}
                 />
               </Map>
+              )}
             </div>
 
           </div>
         </div>
       </div>
+    </>
+  );
+
+  if (!mapsApiKey) {
+    return content;
+  }
+
+  return (
+    <APIProvider
+      apiKey={mapsApiKey}
+      language="ar"
+      region="SA"
+    >
+      {content}
     </APIProvider>
   );
 };

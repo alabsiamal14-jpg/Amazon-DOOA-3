@@ -51,11 +51,67 @@ export function getStoredProducts(): Product[] {
 }
 
 export function saveStoredProducts(products: Product[]): void {
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
   } catch (e) {
-    console.error('Error saving products to storage:', e);
+    console.warn('Error saving products to storage (retrying with compact cache):', e);
+    const fallbackImg = 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80';
+    for (const keepCount of [25, 10, 3, 0]) {
+      try {
+        const compacted = products.map((p, idx) => {
+          const stripImage =
+            idx >= keepCount && typeof p.image_url === 'string' && p.image_url.startsWith('data:image/');
+          const stripGallery =
+            idx >= keepCount && Array.isArray(p.gallery_images)
+              ? p.gallery_images.filter((g) => typeof g === 'string' && !g.startsWith('data:image/'))
+              : p.gallery_images;
+          if (!stripImage && stripGallery === p.gallery_images) return p;
+          return {
+            ...p,
+            ...(stripImage ? { image_url: fallbackImg } : {}),
+            ...(stripGallery !== p.gallery_images ? { gallery_images: stripGallery } : {}),
+          };
+        });
+        localStorage.setItem(PRODUCTS_KEY, JSON.stringify(compacted));
+        return;
+      } catch {
+        // Try smaller keepCount
+      }
+    }
+    console.error('Failed to save compact products cache after stripping data URLs.');
   }
+}
+
+export function upsertStoredProduct(product: Product): void {
+  if (typeof localStorage === 'undefined' || !product?.id) return;
+  const current = getStoredProducts();
+  const exists = current.some((p) => p.id === product.id);
+  const next = exists
+    ? current.map((p) => (p.id === product.id ? product : p))
+    : [product, ...current];
+  saveStoredProducts(next);
+}
+
+export function upsertStoredProducts(newProducts: Product[]): void {
+  if (typeof localStorage === 'undefined' || !Array.isArray(newProducts) || newProducts.length === 0) return;
+  const current = getStoredProducts();
+  const byId = new Map<string, Product>();
+  for (const p of newProducts) {
+    if (p?.id) byId.set(p.id, p);
+  }
+  for (const p of current) {
+    if (p?.id && !byId.has(p.id)) {
+      byId.set(p.id, p);
+    }
+  }
+  saveStoredProducts(Array.from(byId.values()));
+}
+
+export function removeStoredProduct(productId: string): void {
+  if (typeof localStorage === 'undefined' || !productId) return;
+  const current = getStoredProducts();
+  saveStoredProducts(current.filter((p) => p.id !== productId));
 }
 
 export function getStoredSettings(): StoreSettings {
@@ -127,8 +183,31 @@ const ADMIN_TOKEN_KEY = 'amazon_duaa_admin_token_v1';
 let cachedFirebaseIdToken: string | null = null;
 let firebaseTokenProvider: (() => Promise<string | null>) | null = null;
 
+function isJwtTokenExpired(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return true;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const json = typeof atob === 'function'
+      ? atob(padded)
+      : Buffer.from(padded, 'base64').toString('utf8');
+    const payload = JSON.parse(json);
+    if (typeof payload?.exp === 'number') {
+      const expMs = payload.exp < 1e12 ? payload.exp * 1000 : payload.exp;
+      return Date.now() >= expMs;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export function setFirebaseIdToken(token: string | null): void {
-  cachedFirebaseIdToken = token && token !== 'undefined' && token !== 'null' ? token : null;
+  cachedFirebaseIdToken =
+    token && token !== 'undefined' && token !== 'null' && !isJwtTokenExpired(token)
+      ? token
+      : null;
 }
 
 export function registerFirebaseTokenProvider(provider: () => Promise<string | null>): void {
@@ -137,7 +216,14 @@ export function registerFirebaseTokenProvider(provider: () => Promise<string | n
 
 export function getAdminToken(): string | null {
   try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
+    const token = localStorage.getItem(ADMIN_TOKEN_KEY);
+    if (!token || token === 'undefined' || token === 'null') return null;
+    if (isJwtTokenExpired(token)) {
+      localStorage.removeItem(ADMIN_SESSION_KEY);
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      return null;
+    }
+    return token;
   } catch {
     return null;
   }
@@ -178,6 +264,9 @@ export function clearAdminSession(): void {
 }
 
 export function getAuthHeaders(): Record<string, string> {
+  if (cachedFirebaseIdToken && isJwtTokenExpired(cachedFirebaseIdToken)) {
+    cachedFirebaseIdToken = null;
+  }
   const token = cachedFirebaseIdToken || getAdminToken();
   if (token && token !== 'undefined' && token !== 'null') {
     return { Authorization: `Bearer ${token}` };
@@ -207,6 +296,7 @@ export function resetToDefaults(): void {
     localStorage.removeItem(CART_KEY);
     localStorage.removeItem(ORDERS_KEY);
     localStorage.removeItem(ADMIN_SESSION_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
   } catch (e) {
     console.error('Error resetting storage:', e);
   }
