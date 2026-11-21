@@ -22,7 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { db, auth } from '../lib/firebase';
-import { getAuthHeadersAsync, upsertStoredProduct } from '../lib/storage';
+import { getAuthHeadersAsync, hasActiveAuthSessionAsync, upsertStoredProduct } from '../lib/storage';
 import { compressDataUrlIfNeeded } from '../lib/imageCompression';
 import { Product } from '../types';
 import { collection, getDocs, getDoc, addDoc, doc, setDoc, query, orderBy, onSnapshot, where, updateDoc, arrayUnion, runTransaction } from 'firebase/firestore';
@@ -206,10 +206,11 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
           };
           upsertStoredProduct(publishedProduct);
           try {
-              const authHeaders = await getAuthHeadersAsync();
-              if (authHeaders.Authorization) {
+              if (await hasActiveAuthSessionAsync()) {
+                  const authHeaders = await getAuthHeadersAsync();
                   await fetch('/api/db/products', {
                       method: 'POST',
+                      credentials: 'include',
                       headers: { 'Content-Type': 'application/json', ...authHeaders },
                       body: JSON.stringify(publishedProduct),
                   });

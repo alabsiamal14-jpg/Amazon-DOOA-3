@@ -18,6 +18,11 @@ import {
   Bot,
   ExternalLink,
   ChevronLeft,
+  BookOpen,
+  X,
+  Palette,
+  Braces,
+  GitBranch,
 } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { getAuthHeadersAsync } from '../lib/storage.ts';
@@ -93,6 +98,377 @@ const QUICK_PROMPTS = [
   },
 ];
 
+type DevCommandCategoryId = 'css' | 'html' | 'js' | 'git';
+
+interface DevCommandItem {
+  id: string;
+  code: string;
+  title: string;
+  level: 'أساسي' | 'متقدم';
+  description: string;
+  prompt: string;
+}
+
+interface DevCommandCategory {
+  id: DevCommandCategoryId;
+  label: string;
+  badge: string;
+  icon: React.FC<{ className?: string }>;
+  items: DevCommandItem[];
+}
+
+const DEV_COMMAND_CATEGORIES: DevCommandCategory[] = [
+  {
+    id: 'html',
+    label: '1. أوامر ووسوم HTML (الهيكل والواجهات)',
+    badge: 'HTML5',
+    icon: FileCode,
+    items: [
+      {
+        id: 'html-headings',
+        code: '<h1>العنوان الرئيسي للمتجر</h1>\n<h2>عنوان القسم الفرعي</h2>\n<h3>عنوان البطاقة</h3>',
+        title: '<h1> إلى <h6> (العناوين)',
+        level: 'أساسي',
+        description: 'لإنشاء العناوين الرئيسية والفرعية (<h1> هو الأكبر والأهم لمحركات البحث والسيو).',
+        prompt: 'كيف نرتب وسوم العناوين <h1> إلى <h3> في صفحات متجر أمازون دعاء لتحسين السيو (SEO) وإمكانية الوصول؟',
+      },
+      {
+        id: 'html-p',
+        code: '<p>وصف واضح ومختصر لمميزات المنتج وطريقة استخدامه.</p>',
+        title: '<p> (الفقرة النصية)',
+        level: 'أساسي',
+        description: 'لكتابة فقرة نصية منظمة داخل الصفحة أو تفاصيل المنتج.',
+        prompt: 'ما أفضل تنسيق للفقرات النصية <p> في وصف المنتجات لضمان سهولة القراءة على الجوال؟',
+      },
+      {
+        id: 'html-anchor',
+        code: '<a href="/products/serum-1">تصفح تفاصيل المنتج</a>',
+        title: '<a href="الرابط"> (الرابط التشعبي)',
+        level: 'أساسي',
+        description: 'لإنشاء رابط تشعبي ينقل المستخدم لصفحة أو موقع آخر.',
+        prompt: 'كيف نستخدم <a href="..."> بشكل آمن وسريع للتنقل أو لروابط التواصل الخارجي في المتجر؟',
+      },
+      {
+        id: 'html-img',
+        code: '<img src="/images/product.webp" alt="سيروم فيتامين سي للبشرة" loading="lazy" />',
+        title: '<img src="مسار_الصورة" alt="وصف">',
+        level: 'أساسي',
+        description: 'لإدراج صورة داخل الصفحة مع نص بديل مهم للسيو وقارئات الشاشة.',
+        prompt: 'كيف نحسّن صور المنتجات عبر <img> مع alt وصفي و loading="lazy" لتسريع المتجر؟',
+      },
+      {
+        id: 'html-layout',
+        code: '<header>شريط التنقل العلوي</header>\n<section>\n  <div>محتوى القسم</div>\n</section>\n<footer>تذييل المتجر</footer>',
+        title: '<div> و <section> و <header> و <footer>',
+        level: 'أساسي',
+        description: 'لتقسيم الصفحة إلى حاويات وأقسام دلالية (رأس الصفحة، محتوى، تذييل).',
+        prompt: 'اشرح لي كيفية تنظيم تخطيط الصفحة دلالياً باستخدام <header> و <section> و <footer> في مكونات React.',
+      },
+      {
+        id: 'html-form',
+        code: '<form>\n  <input type="text" placeholder="ابحث عن منتج..." />\n  <button type="submit">بحث</button>\n</form>',
+        title: '<form> و <input> و <button>',
+        level: 'أساسي',
+        description: 'لإنشاء النماذج التفاعلية، حقول الإدخال، والأزرار.',
+        prompt: 'كيف نبني نموذج بحث أو تسجيل طلب احترافي باستخدام <form> و <input> و <button> في React؟',
+      },
+      {
+        id: 'html-lists',
+        code: '<ul>\n  <li>توصيل سريع خلال 24 ساعة</li>\n  <li>منتجات أصلية مضمونة</li>\n</ul>',
+        title: '<ul> / <ol> و <li> (القوائم)',
+        level: 'أساسي',
+        description: 'لإنشاء القوائم النقطية (<ul>) أو المرقمة (<ol>) وعناصرها (<li>).',
+        prompt: 'كيف نعرض مميزات المنتج أو خطوات الطلب باستخدام <ul> / <ol> و <li> بتنسيق حديث؟',
+      },
+      {
+        id: 'html-email',
+        code: '<input type="email" required placeholder="name@example.com">',
+        title: 'حقل البريد الإلكتروني بالتحقق التلقائي',
+        level: 'متقدم',
+        description: 'حقل إدخال يتحقق تلقائياً من صيغة البريد ويمنع الإرسال إذا كان فارغاً.',
+        prompt: 'أريد إضافة نموذج اشتراك بريدي في المتجر يستخدم <input type="email" required placeholder="name@example.com"> مع ربطه بـ React.',
+      },
+      {
+        id: 'html-select',
+        code: '<select>\n  <option value="riyadh">الرياض</option>\n  <option value="jeddah">جدة</option>\n</select>',
+        title: 'القائمة المنسدلة (<select> و <option>)',
+        level: 'متقدم',
+        description: 'إنشاء قائمة منسدلة يختار منها المستخدم قيمة واحدة.',
+        prompt: 'أعطني مثالاً نظيفاً لقائمة منسدلة لاختيار المدينة أو الفرز باستخدام <select> و <option> في React.',
+      },
+      {
+        id: 'html-textarea',
+        code: '<textarea rows="4" placeholder="اكتب ملاحظاتك هنا..."></textarea>',
+        title: 'مربع النص متعدد الأسطر (<textarea>)',
+        level: 'متقدم',
+        description: 'مربع نص متعدد الأسطر (مثل رسائل التواصل أو الملاحظات).',
+        prompt: 'كيف نضيف حقل ملاحظات الطلب أو تواصل معنا باستخدام <textarea rows="4"> مع حد أقصى للأحرف؟',
+      },
+      {
+        id: 'html-video',
+        code: '<video controls src="video.mp4"></video>',
+        title: 'مشغّل الفيديو المدمج (<video controls>)',
+        level: 'متقدم',
+        description: 'تضمين مقطع فيديو مع أزرار التشغيل والصوت.',
+        prompt: 'كيف نعرض فيديو تعريفي للمنتج داخل صفحة التفاصيل باستخدام <video controls src="..."> بشكل متجاوب وسريع؟',
+      },
+      {
+        id: 'html-details',
+        code: '<details>\n  <summary>كم يستغرق توصيل الطلب؟</summary>\n  <p>يصل الطلب خلال 24 إلى 48 ساعة.</p>\n</details>',
+        title: 'العنصر القابل للفتح والطي (<details> و <summary>)',
+        level: 'متقدم',
+        description: 'إنشاء عنصر قابل للفتح والطي (مثل الأسئلة الشائعة FAQ) بدون كتابة جافاسكريبت.',
+        prompt: 'أريد إنشاء قسم الأسئلة الشائعة (FAQ) في المتجر باستخدام وسوم <details> و <summary> وتنسيق أنيق.',
+      },
+    ],
+  },
+  {
+    id: 'css',
+    label: '2. أوامر وخصائص CSS (التنسيق والتجاوب والحركة)',
+    badge: 'CSS3',
+    icon: Palette,
+    items: [
+      {
+        id: 'css-colors',
+        code: 'color: #1c1917;\nbackground-color: #fff1f2;',
+        title: 'color و background-color',
+        level: 'أساسي',
+        description: 'لتحديد لون النص ولون الخلفية وتباينهما الواضح.',
+        prompt: 'ما أفضل تدرجات الألوان (color و background-color) لمتجر مستحضرات تجميل فاخرة مع ضمان وضوح القراءة؟',
+      },
+      {
+        id: 'css-typography',
+        code: 'font-size: 16px;\nfont-family: "Cairo", sans-serif;',
+        title: 'font-size و font-family',
+        level: 'أساسي',
+        description: 'للتحكم بحجم الخط ونوعه في العناوين والفقرات.',
+        prompt: 'كيف نضبط التسلسل الهرمي للخطوط (font-size و font-family) باللغة العربية في المشروع؟',
+      },
+      {
+        id: 'css-spacing',
+        code: 'margin: 16px auto;\npadding: 12px 20px;',
+        title: 'margin و padding',
+        level: 'أساسي',
+        description: 'للتحكم بالمسافات الخارجية (حول العنصر) والداخلية (داخل العنصر).',
+        prompt: 'اشرح لي قاعدة استخدام margin و padding بانتظام في بطاقات المنتجات وتفاصيل الطلب.',
+      },
+      {
+        id: 'css-flex-grid',
+        code: 'display: flex;\njustify-content: space-between;\nalign-items: center;\n/* أو للشبكات: */\ndisplay: grid;\ngrid-template-columns: repeat(3, 1fr);\ngap: 16px;',
+        title: 'display: flex و display: grid',
+        level: 'أساسي',
+        description: 'لتوزيع العناصر وترتيبها بمرونة في صفوف أو أعمدة أو شبكات متناسقة.',
+        prompt: 'متى نستخدم display: flex ومتى نستخدم display: grid في شبكة منتجات المتجر وشريط التنقل؟',
+      },
+      {
+        id: 'css-border',
+        code: 'border: 1px solid #e7e5e4;\nborder-radius: 16px;',
+        title: 'border و border-radius',
+        level: 'أساسي',
+        description: 'لإضافة حدود للعناصر وتدوير زواياها بمظهر عصري.',
+        prompt: 'أعطني أفضل نسب border و border-radius لبطاقات المنتجات والأزرار في المتجر.',
+      },
+      {
+        id: 'css-media',
+        code: '@media (max-width: 768px) {\n  .products-grid {\n    grid-template-columns: repeat(2, 1fr);\n  }\n}',
+        title: '@media (max-width: 768px) (التجاوب)',
+        level: 'أساسي',
+        description: 'لجعل التصميم متجاوباً (Responsive) على الهواتف والأجهزة اللوحية.',
+        prompt: 'كيف نضمن تجاوب شبكة المنتجات والسلة على الهواتف عبر @media (max-width: 768px) أو نقاط توقف Tailwind؟',
+      },
+      {
+        id: 'css-root',
+        code: ':root { --main-color: #1e40af; }',
+        title: 'تعريف متغيرات CSS العامة (:root)',
+        level: 'متقدم',
+        description: 'تعريف متغيرات ألوان أو مقاسات لاستخدامها في كامل الموقع وتعديلها من مكان واحد.',
+        prompt: 'كيف أستخدم متغيرات :root و var(--main-color) لتوحيد ألوان متجر أمازون دعاء وتسهيل تعديلها من مكان واحد؟',
+      },
+      {
+        id: 'css-var',
+        code: 'var(--main-color)',
+        title: 'استدعاء قيمة المتغير',
+        level: 'متقدم',
+        description: 'استدعاء قيمة المتغير الذي عرّفته مسبقاً داخل أي عنصر أو قاعدة تنسيق.',
+        prompt: 'أعطني مثالاً عملياً لاستخدام var(--main-color) مع Tailwind CSS v4 أو index.css في المشروع.',
+      },
+      {
+        id: 'css-transition',
+        code: 'transition: all 0.3s ease;',
+        title: 'الانتقالات الناعمة (Transition)',
+        level: 'متقدم',
+        description: 'جعل التغير في اللون أو الحجم أو الظل ناعماً ومتدرجاً بدلاً من أن يكون مفاجئاً (مفيد جداً مع :hover).',
+        prompt: 'أريد تحسين حركة الأزرار وبطاقات المنتجات باستخدام transition: all 0.3s ease وتأثيرات :hover احترافية.',
+      },
+      {
+        id: 'css-keyframes',
+        code: `@keyframes pulseGlow {\n  0%, 100% { transform: scale(1); }\n  50% { transform: scale(1.04); }\n}\n.element {\n  animation: pulseGlow 2s infinite ease-in-out;\n}`,
+        title: '@keyframes و animation',
+        level: 'متقدم',
+        description: 'إنشاء حركات مخصصة مستمرة (مثل اهتزاز زر، دوران أيقونة، أو دخول عنصر).',
+        prompt: 'اكتب لي حركة مخصصة بـ @keyframes و animation لزر الشراء أو شارة العروض الحصرية في المتجر.',
+      },
+      {
+        id: 'css-sticky',
+        code: 'position: sticky;\ntop: 0;',
+        title: 'التثبيت الذكي أثناء التمرير (Sticky)',
+        level: 'متقدم',
+        description: 'تثبيت عنصر (مثل شريط التنقل أو رأس جدول) عند الوصول إليه أثناء التمرير.',
+        prompt: 'كيف نثبّت شريط الفئات أو ملخص السلة أثناء التمرير باستخدام position: sticky; top: 0 بشكل متوافق مع الجوال؟',
+      },
+      {
+        id: 'css-shadow',
+        code: 'box-shadow: 0 4px 12px rgba(0,0,0,0.1);',
+        title: 'الظلال الناعمة (Box Shadow)',
+        level: 'متقدم',
+        description: 'إضافة ظل ناعم يعطي عمقاً للبطاقات والأزرار.',
+        prompt: 'كيف نطبّق ظلالاً ناعمة مثل box-shadow: 0 4px 12px rgba(0,0,0,0.1) على بطاقات المنتجات لرفع جودتها البصرية؟',
+      },
+    ],
+  },
+  {
+    id: 'js',
+    label: '3. أوامر JavaScript (التفاعل والبيانات والنماذج)',
+    badge: 'JS / DOM',
+    icon: Braces,
+    items: [
+      {
+        id: 'js-queryselector',
+        code: 'const btn = document.querySelector(".class-name");',
+        title: 'document.querySelector(".class-name")',
+        level: 'أساسي',
+        description: 'للوصول إلى عنصر معين في الصفحة والتحكم به برمجياً.',
+        prompt: 'اشرح لي متى نستخدم document.querySelector في JavaScript ومتى نستخدم useRef في React.',
+      },
+      {
+        id: 'js-addeventlistener',
+        code: 'element.addEventListener("click", () => {\n  console.log("تم النقر على العنصر");\n});',
+        title: 'element.addEventListener("click", ...)',
+        level: 'أساسي',
+        description: 'للاستماع لأحداث المستخدم مثل النقر على زر أو تعبئة حقل.',
+        prompt: 'كيف تعمل آلية الأحداث addEventListener وكيف تقابلها onClick / onChange في مكونات React؟',
+      },
+      {
+        id: 'js-classlist-toggle',
+        code: 'element.classList.toggle("active");',
+        title: 'element.classList.toggle("active")',
+        level: 'أساسي',
+        description: 'لإضافة أو إزالة صنف تنسيق (مثل فتح وإغلاق قائمة الجوال).',
+        prompt: 'أعطني مثالاً لفتح وإغلاق قائمة الجوال الجانبية باستخدام classList.toggle أو state في React.',
+      },
+      {
+        id: 'js-fetch',
+        code: 'const res = await fetch("/api/products");\nconst data = await res.json();',
+        title: 'fetch("API_URL")',
+        level: 'أساسي',
+        description: 'لجلب البيانات من خادم أو واجهة برمجية دون إعادة تحميل الصفحة.',
+        prompt: 'كيف نستخدم fetch("API_URL") مع try/catch و credentials: "include" بشكل آمن في متجر أمازون دعاء؟',
+      },
+      {
+        id: 'js-localstorage',
+        code: 'localStorage.setItem("key", "value");\nconst val = localStorage.getItem("key");',
+        title: 'التخزين المحلي في المتصفح (localStorage)',
+        level: 'متقدم',
+        description: 'حفظ بيانات بسيطة في متصفح المستخدم (مثل الوضع الليلي أو سلة مؤقتة) وتبقى حتى بعد إغلاق المتصفح.',
+        prompt: 'كيف نستخدم localStorage.setItem و localStorage.getItem بأمان في React لحفظ تفضيلات الزائر مثل الوضع الليلي أو آخر المنتجات المشاهدة؟',
+      },
+      {
+        id: 'js-prevent-default',
+        code: 'event.preventDefault();',
+        title: 'منع إعادة تحميل الصفحة (preventDefault)',
+        level: 'متقدم',
+        description: 'منع السلوك الافتراضي (مثل منع النموذج form من إعادة تحميل الصفحة عند الضغط على إرسال).',
+        prompt: 'اشرح لي كيفية استخدام event.preventDefault() في نماذج الدفع والتسجيل داخل React لمنع إعادة تحميل الصفحة.',
+      },
+      {
+        id: 'js-textcontent',
+        code: 'element.textContent = "نص جديد";',
+        title: 'تعديل النص الداخلي بأمان (textContent)',
+        level: 'متقدم',
+        description: 'تغيير النص الداخلي لعنصر بأمان دون مخاطر حقن HTML (XSS).',
+        prompt: 'لماذا يُفضّل استخدام element.textContent بدلاً من innerHTML عند تحديث النصوص ديناميكياً؟',
+      },
+      {
+        id: 'js-disabled',
+        code: 'element.setAttribute("disabled", "true");\nelement.removeAttribute("disabled");',
+        title: 'تعطيل وتفعيل العناصر أثناء التحميل (disabled)',
+        level: 'متقدم',
+        description: 'تعطيل أو تفعيل عنصر (مثل تعطيل زر الإرسال أثناء التحميل لمنع التكرار).',
+        prompt: 'كيف نمنع تكرار إرسال الطلبات عند النقر المتكرر على زر التأكيد عبر تعطيل الزر أثناء التحميل؟',
+      },
+    ],
+  },
+  {
+    id: 'git',
+    label: '4. أوامر Terminal و Git (تشغيل المشروع وسير العمل)',
+    badge: 'Git / CLI',
+    icon: GitBranch,
+    items: [
+      {
+        id: 'npm-init',
+        code: 'npm init -y',
+        title: 'تهيئة مشروع Node.js جديد (npm init -y)',
+        level: 'أساسي',
+        description: 'لتهيئة مشروع جديد وإنشاء ملف package.json لإدارة الحزم.',
+        prompt: 'اشرح لي بنية ملف package.json الذي ينشئه npm init -y وأهم السكربتات في مشروعنا.',
+      },
+      {
+        id: 'npm-run-dev',
+        code: 'npm run dev',
+        title: 'تشغيل خادم التطوير المحلي (npm run dev)',
+        level: 'أساسي',
+        description: 'لتشغيل خادم التطوير المحلي ومعاينة الموقع مباشرة.',
+        prompt: 'ماذا يحدث خلف الكواليس عند تشغيل npm run dev في متجر أمازون دعاء مع Express و Vite؟',
+      },
+      {
+        id: 'git-commit-flow',
+        code: 'git status\ngit add .\ngit commit -m "وصف التعديل"',
+        title: 'git status / git add . / git commit -m',
+        level: 'أساسي',
+        description: 'لفحص حالة الملفات وحفظ وتتبع التعديلات على الكود محلياً.',
+        prompt: 'ما هي أفضل طريقة لصياغة رسائل git commit وفحص git status قبل حفظ التعديلات؟',
+      },
+      {
+        id: 'git-branch',
+        code: 'git checkout -b feature/new-feature\n# أو بالإصدار الحديث:\ngit switch -c feature/new-feature',
+        title: 'إنشاء فرع جديد للتطوير (Branch)',
+        level: 'متقدم',
+        description: 'إنشاء فرع جديد لتجربة ميزة دون التأثير على الكود الأساسي.',
+        prompt: 'اشرح لي خطوات العمل الآمن بفروع Git باستخدام git checkout -b أو git switch -c قبل تعديل المتجر.',
+      },
+      {
+        id: 'git-push',
+        code: 'git push origin main',
+        title: 'رفع التعديلات للمستودع البعيد (Push)',
+        level: 'متقدم',
+        description: 'رفع التعديلات المحفوظة إلى المستودع البعيد (مثل GitHub).',
+        prompt: 'ما الخطوات الكاملة لحفظ التعديلات في المشروع ورفعها بأمان عبر git push origin main؟',
+      },
+      {
+        id: 'git-pull',
+        code: 'git pull',
+        title: 'سحب التحديثات من المستودع (Pull)',
+        level: 'متقدم',
+        description: 'سحب أحدث التحديثات من المستودع البعيد إلى جهازك.',
+        prompt: 'كيف أسحب التحديثات الجديدة عبر git pull وأتعامل مع أي تعارض ملفات إن ظهر؟',
+      },
+      {
+        id: 'npm-install',
+        code: 'npm install package-name',
+        title: 'تثبيت حزمة أو مكتبة جديدة (npm install)',
+        level: 'متقدم',
+        description: 'تثبيت مكتبة أو حزمة جديدة داخل المشروع.',
+        prompt: 'ما هي أفضل الممارسات عند تثبيت حزمة جديدة عبر npm install داخل مشروع React + Express؟',
+      },
+    ],
+  },
+];
+
+const TOTAL_DEV_COMMANDS = DEV_COMMAND_CATEGORIES.reduce(
+  (sum, category) => sum + category.items.length,
+  0
+);
+
 type ContentPart =
   | { type: 'text'; content: string; key: string }
   | { type: 'code'; langOrPath: string; code: string; key: string };
@@ -123,6 +499,8 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
   const [showZipReportModal, setShowZipReportModal] = useState(false);
   const [zipAnalyzing, setZipAnalyzing] = useState(false);
   const [uploadedProjectFiles, setUploadedProjectFiles] = useState<Record<string, string> | null>(null);
+  const [showCommandsLibrary, setShowCommandsLibrary] = useState(false);
+  const [activeCommandCategory, setActiveCommandCategory] = useState<DevCommandCategoryId>('html');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -504,6 +882,18 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
+            onClick={() => setShowCommandsLibrary((prev) => !prev)}
+            className={`text-xs font-bold px-4 py-2.5 rounded-2xl border transition-all flex items-center gap-1.5 cursor-pointer ${
+              showCommandsLibrary
+                ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-md'
+                : 'bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-100 border-indigo-400/40'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>مكتبة الأوامر والخصائص ({TOTAL_DEV_COMMANDS})</span>
+          </button>
+
+          <button
             onClick={onBackToAdmin}
             className="bg-white/10 hover:bg-white/20 text-white text-xs font-bold px-4 py-2.5 rounded-2xl border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
           >
@@ -531,6 +921,144 @@ export const AdminDeveloperAdvisor: React.FC<AdminDeveloperAdvisorProps> = ({
           )}
         </div>
       </div>
+
+      {/* Interactive Developer Commands & Properties Reference Library */}
+      {showCommandsLibrary && (
+        <div className="bg-stone-950 text-white rounded-3xl border border-indigo-800/60 shadow-2xl p-5 sm:p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-amber-500/15 border border-amber-400/30 text-amber-300 flex items-center justify-center">
+                <Terminal className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm sm:text-base text-white">
+                  مرجع الأوامر والخصائص الاحترافية لتطوير المواقع
+                </h3>
+                <p className="text-[11px] text-stone-400">
+                  انسخ أي أمر مباشرة أو اضغط «اسأل المستشار» لتطبيقه داخل متجر أمازون دعاء
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowCommandsLibrary(false)}
+              className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white transition-colors cursor-pointer"
+              title="إغلاق المكتبة"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Category Tabs */}
+          <div className="flex flex-wrap gap-2">
+            {DEV_COMMAND_CATEGORIES.map((cat) => {
+              const Icon = cat.icon;
+              const isActive = activeCommandCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCommandCategory(cat.id)}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
+                      : 'bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700 hover:text-white'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{cat.label}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-black/30 font-mono">
+                    {cat.items.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Category Items */}
+          {(() => {
+            const currentCat =
+              DEV_COMMAND_CATEGORIES.find((c) => c.id === activeCommandCategory) ||
+              DEV_COMMAND_CATEGORIES[0];
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {currentCat.items.map((item) => {
+                  const cmdBlockId = `ref-cmd-${item.id}`;
+                  const isCopied = copiedCodeId === cmdBlockId;
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-stone-900/90 border border-stone-800 hover:border-indigo-500/40 rounded-2xl p-4 flex flex-col justify-between gap-3 transition-colors"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="font-black text-xs sm:text-sm text-amber-300">
+                            {item.title}
+                          </h4>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                                item.level === 'أساسي'
+                                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-amber-950/80 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              {item.level}
+                            </span>
+                            <span className="text-[10px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-lg">
+                              {currentCat.badge}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-stone-300 leading-relaxed">
+                          {item.description}
+                        </p>
+                        <pre
+                          dir="ltr"
+                          className="bg-stone-950 border border-stone-800 rounded-xl p-3 text-[11px] font-mono text-emerald-300 overflow-x-auto leading-relaxed"
+                        >
+                          <code>{item.code}</code>
+                        </pre>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-stone-800/80">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyCode(item.code, cmdBlockId)}
+                          className="flex items-center gap-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                        >
+                          {isCopied ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span className="text-emerald-400">تم النسخ</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-stone-400" />
+                              <span>نسخ الأمر</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setShowCommandsLibrary(false);
+                            handleSendMessage(item.prompt);
+                          }}
+                          className="flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>اسأل المستشار عنه</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Quick Ideas & Prompt Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

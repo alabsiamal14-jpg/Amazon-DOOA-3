@@ -17,7 +17,7 @@ import {
   Percent,
   CheckSquare,
 } from 'lucide-react';
-import { getAuthHeadersAsync } from '../lib/storage.ts';
+import { getAuthHeadersAsync, hasActiveAuthSessionAsync } from '../lib/storage.ts';
 import { SupplierImportResult } from '../features/whatsapp-supplier-ai/types/index.ts';
 
 export const WhatsAppSupplierDashboard: React.FC = () => {
@@ -111,10 +111,10 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     }, 1500);
 
     try {
-      const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) {
+      if (!(await hasActiveAuthSessionAsync())) {
         throw new Error('يرجى تسجيل الدخول كمسؤول للنظام للتمكن من معالجة البيانات.');
       }
+      const authHeaders = await getAuthHeadersAsync();
 
       setAnalysisProgress(25);
 
@@ -123,6 +123,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
 
       const res = await fetch('/api/whatsapp-supplier-ai/analyze', {
         method: 'POST',
+        credentials: 'include',
         headers: authHeaders,
         body: formData,
       });
@@ -201,10 +202,10 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) {
+      if (!(await hasActiveAuthSessionAsync())) {
         throw new Error('يرجى تسجيل الدخول أولاً كمسؤول.');
       }
+      const authHeaders = await getAuthHeadersAsync();
 
       const postBody = {
         supplier: {
@@ -223,6 +224,7 @@ export const WhatsAppSupplierDashboard: React.FC = () => {
 
       const res = await fetch('/api/whatsapp-supplier-ai/review', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders,

@@ -26,6 +26,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
     try {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -41,16 +42,15 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
         throw new Error(data.error || 'فشل تسجيل الدخول. تحقق من اسم المستخدم وكلمة المرور.');
       }
 
-      if (!data.token || !data.user) {
+      if (!data.user) {
         throw new Error('استجابة غير صالحة من خادم المصادقة');
       }
 
       const adminUser: AdminUser = {
         ...data.user,
-        token: data.token,
       };
 
-      setAdminSession(adminUser, data.token);
+      setAdminSession(adminUser, typeof data.token === 'string' ? data.token : undefined);
       onLoginSuccess(adminUser);
     } catch (err: any) {
       setError(err.message || 'فشل الاتصال بخادم الأمان');

@@ -21,6 +21,8 @@ import {
   getAdminSession,
   clearAdminSession,
   getAuthHeadersAsync,
+  hasActiveAuthSessionAsync,
+  setAdminSession,
   resetToDefaults,
 } from './lib/storage';
 import {
@@ -97,15 +99,81 @@ const ViewLoadingFallback = () => (
   </div>
 );
 
+const mapServerProduct = (sp: any): Product => ({
+  id: sp.productId || sp.id || String(sp.id),
+  title_ar: sp.titleAr || sp.title_ar,
+  description_ar: sp.descriptionAr || sp.description_ar || '',
+  original_price: Number(sp.originalPrice ?? sp.original_price ?? 50),
+  discount_price:
+    sp.discountPrice !== null && sp.discountPrice !== undefined
+      ? Number(sp.discountPrice)
+      : sp.discount_price !== null && sp.discount_price !== undefined
+        ? Number(sp.discount_price)
+        : null,
+  stock_quantity: Number(sp.stockQuantity ?? sp.stock_quantity ?? 10),
+  category_id: sp.categoryId || sp.category_id || 'skincare',
+  category_name: sp.categoryName || sp.category_name || 'عناية بالبشرة',
+  tags: Array.isArray(sp.tags) ? sp.tags : [],
+  image_url:
+    sp.imageUrl ||
+    sp.image_url ||
+    'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
+  gallery_images: Array.isArray(sp.galleryImages)
+    ? sp.galleryImages
+    : Array.isArray(sp.gallery_images)
+      ? sp.gallery_images
+      : undefined,
+  size_or_volume: sp.sizeOrVolume || sp.size_or_volume || undefined,
+  skin_type: sp.skinType || sp.skin_type || undefined,
+  key_benefits: Array.isArray(sp.keyBenefits)
+    ? sp.keyBenefits
+    : Array.isArray(sp.key_benefits)
+      ? sp.key_benefits
+      : undefined,
+  how_to_use: sp.howToUse || sp.how_to_use || undefined,
+  ingredients: sp.ingredients || undefined,
+  badge: sp.badge || undefined,
+  rating: Number(sp.rating ?? 5.0),
+  reviews_count: Number(sp.reviewsCount ?? sp.reviews_count ?? 1),
+  ai_generated: Boolean(sp.aiGenerated ?? sp.ai_generated),
+  featured: Boolean(sp.featured),
+  status: sp.status && sp.status !== 'published' ? 'draft' : 'published',
+  creator_id: sp.creatorId || sp.creator_id,
+  contact_phone: sp.contactPhone || sp.contact_phone || undefined,
+  created_at: sp.createdAt
+    ? new Date(sp.createdAt).toISOString()
+    : sp.created_at
+      ? new Date(sp.created_at).toISOString()
+      : new Date().toISOString(),
+});
+
+const mergeAndSortCatalog = (primary: Product[], secondary: Product[]): Product[] => {
+  const byId = new Map<string, Product>();
+  for (const p of primary) {
+    if (p?.id) byId.set(p.id, p);
+  }
+  for (const p of secondary) {
+    if (p?.id && !byId.has(p.id)) {
+      byId.set(p.id, p);
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return (Number.isFinite(tB) ? tB : 0) - (Number.isFinite(tA) ? tA : 0);
+  });
+};
+
 export default function App() {
   const [products, setProducts] = useState<Product[]>(getStoredProducts);
   const [orders, setOrders] = useState<Order[]>(getStoredOrders);
   const [settings, setSettings] = useState<StoreSettings>(getStoredSettings);
   const [cart, setCart] = useState<CartItem[]>(getStoredCart);
   const [wishlist, setWishlist] = useState<string[]>(getStoredWishlist);
-  const [adminUser, setAdminUser] = useState<AdminUser | null>(getAdminSession);
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
   const [adminSubTab, setAdminSubTab] = useState<'center' | 'products' | 'bulk-import' | 'smart-assistant' | 'employee-drafts' | 'whatsapp-supplier' | 'pricing-ai' | 'settings' | 'engineering-architect'>('center');
   const [pendingEmployeeDraftsCount, setPendingEmployeeDraftsCount] = useState<number>(0);
+  const [employeeDraftsRefreshTick, setEmployeeDraftsRefreshTick] = useState<number>(0);
   const [pendingBulkImportCount, setPendingBulkImportCount] = useState<number>(0);
   const [pendingSmartAssistantCount, setPendingSmartAssistantCount] = useState<number>(0);
   const [isAdminSupplierMode, setIsAdminSupplierMode] = useState(false);
@@ -123,11 +191,13 @@ export default function App() {
       return exists ? prev.map((p) => (p.id === newProduct.id ? newProduct : p)) : [newProduct, ...prev];
     });
     saveProductCloud(newProduct).catch(() => {});
-    getAuthHeadersAsync()
-      .then((authHeaders) => {
-        if (!authHeaders.Authorization) return;
+    hasActiveAuthSessionAsync()
+      .then(async (hasSession) => {
+        if (!hasSession) return;
+        const authHeaders = await getAuthHeadersAsync();
         return fetch('/api/db/products', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify(newProduct),
         });
@@ -149,30 +219,41 @@ export default function App() {
     productsRef.current = products;
   }, [products]);
 
-  // Server-side verification of admin session and HMAC token on mount
+  // Server-side verification of HttpOnly admin cookie / Firebase admin session on mount (prevents localStorage UI spoofing)
   useEffect(() => {
+    let active = true;
     const verifyAdmin = async () => {
-      const session = getAdminSession();
-      if (!session || !session.token) {
-        if (adminUser) {
-          clearAdminSession();
-          setAdminUser(null);
-        }
+      const localMeta = getAdminSession();
+      const authHeaders = await getAuthHeadersAsync();
+      if (!localMeta && !authHeaders.Authorization) {
         return;
       }
       try {
         const res = await fetch('/api/admin/verify', {
-          headers: await getAuthHeadersAsync(),
+          credentials: 'include',
+          headers: authHeaders,
         });
-        if (!res.ok) {
+        if (!active) return;
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data?.user) {
+            setAdminSession(data.user);
+            setAdminUser(data.user);
+          } else if (localMeta) {
+            setAdminUser(localMeta);
+          }
+        } else {
           clearAdminSession();
           setAdminUser(null);
         }
       } catch {
-        // Network resilience: do not immediately clear on transient network glitch
+        // Keep adminUser locked (null) until server verification succeeds
       }
     };
     verifyAdmin();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const getInitialActiveTab = (): 'store' | 'product-detail' | 'checkout' | 'orders' | 'admin' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant' => {
@@ -191,9 +272,12 @@ export default function App() {
   const refreshPendingEmployeeDraftsCount = async () => {
     if (!adminUser) return;
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const headers = await getAuthHeadersAsync();
-      if (!headers.Authorization) return;
-      const res = await fetch('/api/employee-assistant/drafts/count', { headers });
+      const res = await fetch('/api/employee-assistant/drafts/count', {
+        credentials: 'include',
+        headers,
+      });
       if (res.ok) {
         const data = await res.json();
         setPendingEmployeeDraftsCount(Number(data.pendingCount || 0));
@@ -206,9 +290,12 @@ export default function App() {
   const refreshPendingBulkImportCount = async () => {
     if (!adminUser) return;
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const headers = await getAuthHeadersAsync();
-      if (!headers.Authorization) return;
-      const res = await fetch('/api/admin/bulk-import/drafts?status=pending_review', { headers });
+      const res = await fetch('/api/admin/bulk-import/drafts?status=pending_review', {
+        credentials: 'include',
+        headers,
+      });
       if (res.ok) {
         const data = await res.json();
         setPendingBulkImportCount(Number(data.pendingCount ?? (Array.isArray(data.drafts) ? data.drafts.length : 0)));
@@ -221,9 +308,12 @@ export default function App() {
   const refreshPendingSmartAssistantCount = async () => {
     if (!adminUser) return;
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const headers = await getAuthHeadersAsync();
-      if (!headers.Authorization) return;
-      const res = await fetch('/api/admin/smart-assistant/drafts?status=pending_review', { headers });
+      const res = await fetch('/api/admin/smart-assistant/drafts?status=pending_review', {
+        credentials: 'include',
+        headers,
+      });
       if (res.ok) {
         const data = await res.json();
         setPendingSmartAssistantCount(Number(data.pendingCount ?? (Array.isArray(data.drafts) ? data.drafts.length : 0)));
@@ -234,12 +324,43 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (adminUser) {
-      refreshPendingEmployeeDraftsCount();
-      refreshPendingBulkImportCount();
-      refreshPendingSmartAssistantCount();
-    }
+    if (!adminUser) return;
+    let active = true;
+    refreshPendingEmployeeDraftsCount();
+    refreshPendingBulkImportCount();
+    refreshPendingSmartAssistantCount();
+    (async () => {
+      try {
+        const authHeaders = (await hasActiveAuthSessionAsync()) ? await getAuthHeadersAsync() : {};
+        const res = await fetch('/api/db/products?fresh=1', {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: authHeaders,
+        });
+        if (!res.ok || !active) return;
+        const sqlProds = await res.json();
+        if (!Array.isArray(sqlProds) || !active) return;
+        const mapped = sqlProds.map(mapServerProduct).filter((p) => p.id && p.title_ar);
+        if (mapped.length > 0 && active) {
+          setProducts((prev) => mergeAndSortCatalog(mapped, prev));
+        }
+      } catch {
+        // Ignore transient failure
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, [adminUser]);
+
+  useEffect(() => {
+    if (adminUser && activeTab === 'admin') {
+      refreshPendingEmployeeDraftsCount();
+      if (adminSubTab === 'employee-drafts') {
+        setEmployeeDraftsRefreshTick((t) => t + 1);
+      }
+    }
+  }, [adminUser, activeTab, adminSubTab]);
 
   // Keep standalone URL hash in sync when opening or closing the independent assistant page
   useEffect(() => {
@@ -286,74 +407,12 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    const mapServerProduct = (sp: any): Product => ({
-      id: sp.productId || sp.id || String(sp.id),
-      title_ar: sp.titleAr || sp.title_ar,
-      description_ar: sp.descriptionAr || sp.description_ar || '',
-      original_price: Number(sp.originalPrice ?? sp.original_price ?? 50),
-      discount_price:
-        sp.discountPrice !== null && sp.discountPrice !== undefined
-          ? Number(sp.discountPrice)
-          : sp.discount_price !== null && sp.discount_price !== undefined
-            ? Number(sp.discount_price)
-            : null,
-      stock_quantity: Number(sp.stockQuantity ?? sp.stock_quantity ?? 10),
-      category_id: sp.categoryId || sp.category_id || 'skincare',
-      category_name: sp.categoryName || sp.category_name || 'عناية بالبشرة',
-      tags: Array.isArray(sp.tags) ? sp.tags : [],
-      image_url:
-        sp.imageUrl ||
-        sp.image_url ||
-        'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
-      gallery_images: Array.isArray(sp.galleryImages)
-        ? sp.galleryImages
-        : Array.isArray(sp.gallery_images)
-          ? sp.gallery_images
-          : undefined,
-      size_or_volume: sp.sizeOrVolume || sp.size_or_volume || undefined,
-      skin_type: sp.skinType || sp.skin_type || undefined,
-      key_benefits: Array.isArray(sp.keyBenefits)
-        ? sp.keyBenefits
-        : Array.isArray(sp.key_benefits)
-          ? sp.key_benefits
-          : undefined,
-      how_to_use: sp.howToUse || sp.how_to_use || undefined,
-      ingredients: sp.ingredients || undefined,
-      badge: sp.badge || undefined,
-      rating: Number(sp.rating ?? 5.0),
-      reviews_count: Number(sp.reviewsCount ?? sp.reviews_count ?? 1),
-      ai_generated: Boolean(sp.aiGenerated ?? sp.ai_generated),
-      featured: Boolean(sp.featured),
-      status: sp.status === 'draft' ? 'draft' : 'published',
-      creator_id: sp.creatorId || sp.creator_id,
-      contact_phone: sp.contactPhone || sp.contact_phone || undefined,
-      created_at: sp.createdAt
-        ? new Date(sp.createdAt).toISOString()
-        : sp.created_at
-          ? new Date(sp.created_at).toISOString()
-          : new Date().toISOString(),
-    });
-
-    const mergeAndSortCatalog = (primary: Product[], secondary: Product[]): Product[] => {
-      const byId = new Map<string, Product>();
-      for (const p of primary) {
-        if (p?.id) byId.set(p.id, p);
-      }
-      for (const p of secondary) {
-        if (p?.id && !byId.has(p.id)) {
-          byId.set(p.id, p);
-        }
-      }
-      return Array.from(byId.values()).sort((a, b) => {
-        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return (Number.isFinite(tB) ? tB : 0) - (Number.isFinite(tA) ? tA : 0);
-      });
-    };
-
     async function loadData() {
+      const authHeaders = (await hasActiveAuthSessionAsync()) ? await getAuthHeadersAsync() : {};
       const serverProducts: Product[] = await fetch('/api/db/products', {
         cache: 'no-store',
+        credentials: 'include',
+        headers: authHeaders,
       })
         .then(async (res) => {
           if (!res.ok) return [];
@@ -464,6 +523,22 @@ export default function App() {
           role: 'superadmin',
         };
         setAdminUser(adminSession);
+        getAuthHeadersAsync()
+          .then((headers) =>
+            fetch('/api/admin/firebase-session', {
+              method: 'POST',
+              credentials: 'include',
+              headers,
+            })
+          )
+          .then(async (res) => {
+            if (!res.ok) return;
+            const data = await res.json().catch(() => null);
+            if (data?.token && isActiveSession()) {
+              setAdminSession(adminSession, data.token);
+            }
+          })
+          .catch(() => {});
       } else {
         // If logged in user is NOT an admin, clear any old admin session
         clearAdminSession();
@@ -790,10 +865,11 @@ export default function App() {
     }
 
     try {
-      const authHeaders = await getAuthHeadersAsync();
-      if (authHeaders.Authorization) {
+      if (await hasActiveAuthSessionAsync()) {
+        const authHeaders = await getAuthHeadersAsync();
         const response = await fetch('/api/db/products', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify(newProduct),
         });
@@ -1142,19 +1218,18 @@ export default function App() {
     try {
       await updateOrderStatusCloud(orderId, status);
       let serverOk = false;
-      if (targetOrder?.order_number) {
+      if (targetOrder?.order_number && (await hasActiveAuthSessionAsync())) {
         const authHeaders = await getAuthHeadersAsync();
-        if (authHeaders.Authorization) {
-          const res = await fetch(
-            `/api/db/orders/${encodeURIComponent(targetOrder.order_number)}/status`,
-            {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json', ...authHeaders },
-              body: JSON.stringify({ status }),
-            }
-          );
-          if (res.ok) serverOk = true;
-        }
+        const res = await fetch(
+          `/api/db/orders/${encodeURIComponent(targetOrder.order_number)}/status`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
+            body: JSON.stringify({ status }),
+          }
+        );
+        if (res.ok) serverOk = true;
       }
       try {
         await updateOrderStatusFirestore(orderId, status);
@@ -1306,8 +1381,9 @@ export default function App() {
       cartUnsubscribeRef.current();
       cartUnsubscribeRef.current = null;
     }
-    // 2. Sign out from Firebase Authentication
+    // 2. Sign out from Firebase Authentication & revoke any server admin cookie
     await logoutFirebase();
+    fetch('/api/admin/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     // 3. Reset user and admin session
     setCurrentUser(null);
     clearAdminSession();
@@ -1322,6 +1398,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/db/users/${email}/role`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
         body: JSON.stringify({ role }),
       });
@@ -1355,8 +1432,14 @@ export default function App() {
   };
 
   const handleLogoutAdmin = () => {
+    fetch('/api/admin/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     clearAdminSession();
     setAdminUser(null);
+    setProducts((prev) => {
+      const cleaned = prev.filter((p) => !p.status || p.status === 'published');
+      saveStoredProducts(cleaned);
+      return cleaned;
+    });
     setActiveTab('store');
     showToast('تم تسجيل الخروج بنجاح', 'info');
   };
@@ -1479,6 +1562,7 @@ export default function App() {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onDraftSaved={() => {
+                setEmployeeDraftsRefreshTick((t) => t + 1);
                 refreshPendingEmployeeDraftsCount();
               }}
             />
@@ -1507,7 +1591,7 @@ export default function App() {
         {activeTab === 'product-detail' && selectedProduct && (
           <ProductDetailsPage
             product={selectedProduct}
-            allProducts={products}
+            allProducts={publishedProducts}
             onBackToStore={() => {
               setActiveTab('store');
               window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1596,7 +1680,7 @@ export default function App() {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onAddToCart={handleAddToCart}
-              allProducts={products}
+              allProducts={publishedProducts}
             />
           ))}
 
@@ -1681,7 +1765,7 @@ export default function App() {
                     }`}
                   >
                     <Bot className="w-4 h-4" />
-                    <span>Pending Employee Drafts</span>
+                    <span>منتجات مساعد الموظفين</span>
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
                       adminSubTab === 'employee-drafts' ? 'bg-stone-950 text-amber-300' : 'bg-amber-400 text-stone-950'
                     }`}>
@@ -1810,6 +1894,7 @@ export default function App() {
                 <EmployeeDraftsReviewPanel
                   categories={INITIAL_CATEGORIES}
                   settings={settings}
+                  refreshTrigger={employeeDraftsRefreshTick}
                   onDraftPublished={(publishedProduct) => {
                     upsertStoredProduct(publishedProduct);
                     setProducts((prev) => {
@@ -1818,6 +1903,11 @@ export default function App() {
                         ? prev.map((p) => (p.id === publishedProduct.id ? publishedProduct : p))
                         : [publishedProduct, ...prev];
                     });
+                    saveProductCloud(publishedProduct).catch(() => {});
+                    if (currentUser?.role === 'admin') {
+                      saveProductFirestore(publishedProduct).catch(() => {});
+                    }
+                    refreshPendingEmployeeDraftsCount();
                     showToast(`تم تسعير ونشر "${publishedProduct.title_ar}" في المتجر!`, 'success');
                   }}
                   onPendingCountChange={(count) => setPendingEmployeeDraftsCount(count)}
@@ -1903,7 +1993,7 @@ export default function App() {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onAddToCart={handleAddToCart}
-            allProducts={products}
+            allProducts={publishedProducts}
           />
         )}
           </Suspense>

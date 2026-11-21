@@ -80,7 +80,7 @@ export function normalizeFirestoreProduct(docId: string, d: Record<string, any>)
     rating: Number.isFinite(Number(d.rating)) ? Number(d.rating) : 5.0,
     reviews_count: Number.isFinite(Number(d.reviews_count)) ? Number(d.reviews_count) : 1,
     featured: Boolean(d.featured),
-    status: d.status === 'draft' ? 'draft' : 'published',
+    status: d.status && d.status !== 'published' ? 'draft' : 'published',
     creator_id: d.creator_id || undefined,
     created_at:
       typeof d.createdAt === 'string'

@@ -191,6 +191,7 @@ export interface EmployeeDraft {
   price: number | null;
   original_price: number | null;
   discount_price: number | null;
+  stock_quantity?: number;
   pricing_status_label: string;
   status: EmployeeDraftStatus;
   published_product_id?: string | null;

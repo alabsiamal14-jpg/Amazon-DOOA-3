@@ -14,6 +14,9 @@ import {
   getAdminJwtSecret,
   resolveAuthenticatedUser,
   hasRole,
+  ADMIN_SESSION_COOKIE_NAME,
+  extractAdminCookieToken,
+  revokeAdminToken,
   AuthRequest,
 } from './src/middleware/auth.ts';
 import { getOrCreateUser } from './src/db/users.ts';
@@ -61,6 +64,24 @@ const PORT = cliPort || (process.env.NODE_ENV === 'production' ? Number(process.
 const HOST = getCliArg('--host') || '0.0.0.0';
 
 app.use(express.json({ limit: '25mb' }));
+
+// Security: Never expose internal backups, local store data, scripts, or dotfiles to the web
+app.use((req, res, next) => {
+  const normalizedPath = req.path.replace(/\/+/g, '/').toLowerCase();
+  if (
+    normalizedPath === '/backups' ||
+    normalizedPath.startsWith('/backups/') ||
+    normalizedPath === '/data' ||
+    normalizedPath.startsWith('/data/') ||
+    normalizedPath === '/scripts' ||
+    normalizedPath.startsWith('/scripts/') ||
+    /(^|\/)\.(env|git|htaccess)/i.test(normalizedPath)
+  ) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  return next();
+});
+
 app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
 // =========================================================================
@@ -92,7 +113,44 @@ function timingSafeEqualStrings(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// Admin Login Endpoint with Timing-Safe verification, Brute Force Protection, and HMAC Token
+function isHttpsRequest(req: Request): boolean {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (req.secure || proto === 'https') return true;
+  if (String(req.headers['x-forwarded-ssl'] || '').toLowerCase() === 'on') return true;
+  const forwarded = String(req.headers['forwarded'] || '').toLowerCase();
+  if (forwarded.includes('proto=https')) return true;
+  const origin = String(req.headers.origin || '').toLowerCase();
+  const referer = String(req.headers.referer || '').toLowerCase();
+  if (origin.startsWith('https://') || referer.startsWith('https://')) return true;
+  const fwdHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+  if (fwdHost && !fwdHost.startsWith('localhost') && !fwdHost.startsWith('127.0.0.1')) {
+    return true;
+  }
+  return false;
+}
+
+function setAdminSessionCookie(req: Request, res: Response, token: string): void {
+  const isHttps = isHttpsRequest(req);
+  res.cookie(ADMIN_SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? 'none' : 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+}
+
+function clearAdminSessionCookie(req: Request, res: Response): void {
+  const isHttps = isHttpsRequest(req);
+  res.clearCookie(ADMIN_SESSION_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? 'none' : 'lax',
+    path: '/',
+  });
+}
+
+// Admin Login Endpoint with Timing-Safe verification, Brute Force Protection, and HttpOnly Cookie + HMAC Token
 app.post('/api/admin/login', (req: Request, res: Response) => {
   try {
     const { username, password } = req.body || {};
@@ -133,6 +191,7 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
     if (isUserValid && isPassValid) {
       loginAttempts.delete(attemptKey);
       const token = createAdminToken(String(username).trim());
+      setAdminSessionCookie(req, res, token);
       return res.json({
         success: true,
         token,
@@ -165,33 +224,48 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
   }
 });
 
-// Admin Session Verification Endpoint
-app.get('/api/admin/verify', requireAuth, (req: AuthRequest, res: Response) => {
-  if (hasRole(req.user, ['admin'])) {
-    return res.json({
-      ok: true,
-      user: {
-        id: req.user!.uid,
-        username: req.user!.username || 'admin',
-        displayName: req.user!.displayName || 'مدير المتجر',
-        role: 'superadmin',
-        email: req.user!.email,
-      },
-    });
+// Exchange verified Firebase Admin Auth ID Token for an HttpOnly Admin Cookie Session
+app.post('/api/admin/firebase-session', requireAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    if (!getAdminJwtSecret()) {
+      return res.json({ ok: true, cookieIssued: false });
+    }
+    const token = createAdminToken(req.user?.email || req.user?.username || 'admin');
+    setAdminSessionCookie(req, res, token);
+    return res.json({ ok: true, cookieIssued: true, token });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to issue session cookie' });
   }
-  if (req.user?.role === 'staff') {
-    return res.json({
-      ok: true,
-      user: {
-        id: req.user.uid,
-        username: req.user.username || 'staff',
-        displayName: req.user.displayName || 'موظف المتجر',
-        role: 'staff',
-        email: req.user.email,
-      },
-    });
-  }
-  return res.status(403).json({ error: 'Forbidden: Insufficient privileges' });
+});
+
+// Admin Logout Endpoint: Revokes token server-side and clears HttpOnly cookie
+app.post('/api/admin/logout', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  const bearerToken =
+    authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split('Bearer ')[1]?.trim()
+      : undefined;
+  const cookieToken = extractAdminCookieToken(req);
+
+  if (bearerToken) revokeAdminToken(bearerToken);
+  if (cookieToken) revokeAdminToken(cookieToken);
+
+  clearAdminSessionCookie(req, res);
+  return res.json({ ok: true });
+});
+
+// Admin Session Verification Endpoint (Strictly Admin-only)
+app.get('/api/admin/verify', requireAdmin, (req: AuthRequest, res: Response) => {
+  return res.json({
+    ok: true,
+    user: {
+      id: req.user!.uid,
+      username: req.user!.username || 'admin',
+      displayName: req.user!.displayName || 'مدير المتجر',
+      role: 'superadmin',
+      email: req.user!.email,
+    },
+  });
 });
 
 // Internal Health Check (Admin only)
@@ -271,9 +345,28 @@ app.get('/api/db/products', async (req, res) => {
       invalidateFirestoreCatalogCache();
     }
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+    // Only authenticated admin/staff users may view non-published/draft products
+    const bearer = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.split('Bearer ')[1]?.trim()
+      : '';
+    const cookieToken = extractAdminCookieToken(req) || '';
+    const token = bearer || cookieToken;
+    let isPrivileged = false;
+    if (token) {
+      try {
+        const caller = await resolveAuthenticatedUser(token);
+        isPrivileged = Boolean(caller && (caller.role === 'admin' || caller.role === 'staff'));
+      } catch {
+        isPrivileged = false;
+      }
+    }
+
     let productsList = await getAllProducts(forceRefresh);
 
-    if (status) {
+    if (!isPrivileged) {
+      productsList = productsList.filter((p: any) => !p.status || p.status === 'published');
+    } else if (status) {
       productsList = productsList.filter((p: any) => p.status === status);
     }
 
@@ -284,7 +377,7 @@ app.get('/api/db/products', async (req, res) => {
   }
 });
 
-// Public endpoint for visitor/mobile devices to save products durably and invalidate cache
+// Public endpoint for visitor/mobile devices to create NEW products safely without overwriting existing store items
 app.post('/api/db/products/public', async (req, res) => {
   try {
     const body = req.body || {};
@@ -301,14 +394,33 @@ app.post('/api/db/products/public', async (req, res) => {
     if (!rawImageUrl || rawImageUrl.startsWith('blob:')) {
       return res.status(400).json({ error: 'يرجى إرفاق صورة صالحة للمنتج.' });
     }
+    const isSafeImageUrl =
+      rawImageUrl.startsWith('https://') ||
+      rawImageUrl.startsWith('http://') ||
+      /^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(rawImageUrl);
+    if (!isSafeImageUrl) {
+      return res.status(400).json({ error: 'صيغة رابط الصورة غير مدعومة أو غير آمنة.' });
+    }
     if (rawImageUrl.length > 900_000) {
       return res.status(400).json({ error: 'حجم الصورة كبير جداً، يرجى اختيار صورة أصغر.' });
     }
 
-    const safeId =
-      typeof body.id === 'string' && body.id.trim().length > 0 && body.id.trim().length <= 120
-        ? body.id.trim()
-        : `visitor-prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    let safeId: string;
+    if (typeof body.id === 'string' && body.id.trim().length > 0) {
+      const requestedId = body.id.trim();
+      if (!/^visitor-prod-[a-zA-Z0-9_-]{3,100}$/.test(requestedId)) {
+        return res.status(400).json({ error: 'معرف المنتج العام غير صالح.' });
+      }
+      safeId = requestedId;
+    } else {
+      safeId = `visitor-prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    }
+
+    // Prevent overwriting or hijacking any existing catalog product
+    const existingProduct = await getProductById(safeId);
+    if (existingProduct) {
+      return res.status(409).json({ error: 'هذا المنتج موجود بالفعل ولا يمكن تعديله عبر المسار العام.' });
+    }
 
     const safeCreatedAt =
       typeof body.created_at === 'string' && !Number.isNaN(Date.parse(body.created_at))
@@ -378,8 +490,19 @@ app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) 
       return res.status(400).json({ error: 'Product id and title_ar are required' });
     }
 
-    // Server-side RBAC enforcement: staff users can only submit drafts and never self-publish
+    // Server-side RBAC enforcement: staff users can only submit/update their own drafts and never modify/unpublish published products
     const isStaffOnly = req.user?.role === 'staff';
+    if (isStaffOnly) {
+      const existing = await getProductById(String(rawProductData.id));
+      if (existing) {
+        if (existing.status === 'published' || (existing.creatorId && existing.creatorId !== req.user?.uid)) {
+          return res.status(403).json({
+            error: 'Forbidden: Staff cannot overwrite or unpublish existing store products',
+          });
+        }
+      }
+    }
+
     const enforcedStatus: 'draft' | 'published' = isStaffOnly
       ? 'draft'
       : rawProductData.status === 'draft'
@@ -1459,6 +1582,108 @@ export const FlashSaleBanner: React.FC<FlashSaleBannerProps> = ({ onExploreSale 
 - أرسل لي كود إضافة زر الطلب السريع بضغطة واحدة (1-Click Order)`;
   }
 
+  if (
+    msg.includes('css') ||
+    msg.includes('html') ||
+    msg.includes('git') ||
+    msg.includes('localstorage') ||
+    msg.includes('preventdefault') ||
+    msg.includes('queryselector') ||
+    msg.includes('addeventlistener') ||
+    msg.includes('classlist') ||
+    msg.includes('fetch(') ||
+    msg.includes('flex') ||
+    msg.includes('grid') ||
+    msg.includes('@media') ||
+    msg.includes('sticky') ||
+    msg.includes('keyframes') ||
+    msg.includes('details') ||
+    msg.includes('textcontent') ||
+    msg.includes('npm init') ||
+    msg.includes('npm run dev') ||
+    msg.includes('npm install') ||
+    msg.includes('أوامر') ||
+    msg.includes('وسوم') ||
+    msg.includes('متغيرات')
+  ) {
+    return `### 📚 مرجع الأوامر والوسوم الكامل في المستشار البرمجي (أساسي + متقدم)
+
+إليك الملخص التنفيذي لأهم وسوم HTML وخصائص CSS وأوامر JavaScript وTerminal/Git المعتمدة لتطوير واجهات المتجر:
+
+\`\`\`html
+<!-- 1. وسوم HTML (بناء الهيكل + واجهات تفاعلية) -->
+<header><h1>أمازون دعاء</h1></header>
+<section>
+  <p>أرقى مستحضرات العناية والتجميل.</p>
+  <a href="/products">تصفح المنتجات</a>
+  <img src="/product.webp" alt="منتج عناية" loading="lazy" />
+  <ul><li>شحن سريع</li><li>أصلي 100%</li></ul>
+  <form>
+    <input type="email" required placeholder="name@example.com" />
+    <select><option value="riyadh">الرياض</option></select>
+    <textarea rows="4" placeholder="ملاحظاتك..."></textarea>
+    <button type="submit">إرسال</button>
+  </form>
+  <video controls src="video.mp4"></video>
+  <details><summary>الأسئلة الشائعة (FAQ)</summary><p>التوصيل خلال 24-48 ساعة.</p></details>
+</section>
+<footer>جميع الحقوق محفوظة</footer>
+\`\`\`
+
+\`\`\`css
+/* 2. خصائص CSS (الأساسيات والتجاوب + المتغيرات والحركة) */
+:root { --main-color: #1e40af; }
+.sticky-nav { position: sticky; top: 0; z-index: 40; }
+.product-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.product-card {
+  color: #1c1917;
+  background-color: #ffffff;
+  font-size: 16px;
+  font-family: "Cairo", sans-serif;
+  margin: 8px;
+  padding: 16px;
+  border: 1px solid #e7e5e4;
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+.btn-primary { display: flex; align-items: center; background-color: var(--main-color); }
+@keyframes pulseSoft { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+@media (max-width: 768px) { .product-grid { grid-template-columns: repeat(2, 1fr); } }
+\`\`\`
+
+\`\`\`js
+// 3. أوامر JavaScript (DOM والأحداث والشبكة والتخزين والنماذج)
+const menuBtn = document.querySelector(".menu-btn");
+menuBtn?.addEventListener("click", () => menuBtn.classList.toggle("active"));
+const res = await fetch("/api/products");
+localStorage.setItem("theme", "dark");
+const savedTheme = localStorage.getItem("theme");
+form?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitBtn.setAttribute("disabled", "true");
+  statusEl.textContent = "جاري الإرسال...";
+  submitBtn.removeAttribute("disabled");
+});
+\`\`\`
+
+\`\`\`bash
+# 4. أوامر Terminal و Git لتشغيل المشروع وسير العمل
+npm init -y
+npm install <package-name>
+npm run dev
+git status && git add . && git commit -m "تحديث الميزة"
+git checkout -b feature/new-ui   # أو git switch -c feature/new-ui
+git pull && git push origin main
+\`\`\`
+
+### 💡 اقتراحات لتطوير المنصة والخطوات التالية:
+- أرسل لي كود تطبيق متغيرات :root و var(--main-color) في ملف index.css
+- أرسل لي كود قسم الأسئلة الشائعة (FAQ) باستخدام <details> و <summary>
+- أرسل لي كود نظام كوبونات الخصم في السلة
+- أرسل لي كود شريط العد التنازلي للعروض الخاصة (Flash Sale)`;
+  }
+
   // Default smart roadmap & code
   return `### 🏛️ استشارة تطوير منصة أمازون دعاء | Amazon Duaa
 
@@ -1611,6 +1836,14 @@ app.post('/api/ai/developer-advisor', requireAdmin, async (req: AuthRequest, res
 
 === الكود الفعلي لمشروع Amazon Duaa (مرفق للتحليل المباشر) ===
 ${codebaseSnapshot.formattedContext}
+===================================================
+
+=== المرجع البرمجي المعتمد للمستشار (HTML / CSS / JS / Git & Terminal) ===
+عند اقتراح حلول واجهات أو سير عمل، اعتمد واستشهد عند الحاجة بهذه الأوامر والخصائص القياسية (الأساسية والمتقدمة):
+1. HTML (بناء الهيكل والواجهات): \`<h1>..<h6>\`, \`<p>\`, \`<a href>\`, \`<img src alt>\`, \`<div>/<section>/<header>/<footer>\`, \`<form>/<input>/<button>\`, \`<ul>/<ol>/<li>\`, \`<input type="email" required placeholder="name@example.com">\`, \`<select>/<option>\`, \`<textarea rows="4">\`, \`<video controls src="video.mp4">\`, \`<details>/<summary>\`.
+2. CSS (التنسيق والتجاوب والحركة): \`color\`, \`background-color\`, \`font-size\`, \`font-family\`, \`margin\`, \`padding\`, \`display: flex\`, \`display: grid\`, \`border\`, \`border-radius\`, \`@media (max-width: 768px)\`, \`:root { --main-color: #1e40af; }\`, \`var(--main-color)\`, \`transition: all 0.3s ease;\`, \`@keyframes\` و \`animation\`, \`position: sticky; top: 0;\`, \`box-shadow: 0 4px 12px rgba(0,0,0,0.1);\`.
+3. JavaScript (التفاعل والشبكة والتخزين والنماذج): \`document.querySelector(".class-name")\`, \`element.addEventListener("click", ...)\`, \`element.classList.toggle("active")\`, \`fetch("API_URL")\`, \`localStorage.setItem\` / \`getItem\`, \`event.preventDefault()\`, \`element.textContent = "..."\`, \`element.setAttribute("disabled", "true")\` و \`removeAttribute("disabled")\`.
+4. Terminal و Git: \`npm init -y\`, \`npm run dev\`, \`npm install <package>\`, \`git status / git add . / git commit -m "..."\`, \`git checkout -b\` / \`git switch -c\`, \`git push origin main\`, \`git pull\`.
 ===================================================
 
 4. إلزامي في نهاية كل رسالة:

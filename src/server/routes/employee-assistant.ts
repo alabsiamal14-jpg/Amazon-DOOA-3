@@ -644,6 +644,7 @@ router.post(
         success: true,
         draft: result.draft,
         product: result.product,
+        firestoreProductSynced: result.firestoreProductSynced,
         message: 'تم تسعير المنتج ونشره في المتجر بنجاح!',
       });
     } catch (err: any) {

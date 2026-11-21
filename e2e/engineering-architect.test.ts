@@ -84,7 +84,7 @@ describe('Amazon Duaa AI Engineering Architect (المستشار الهندسي 
       .set('Authorization', `Bearer ${adminToken}`);
     const findings: any[] = ws.body.findings;
     const categories = new Set(findings.map((f) => f.category));
-    expect(categories.has('confirmed_issue')).toBe(true);
+    expect(categories.has('confirmed_issue')).toBe(false);
     expect(categories.has('potential_issue')).toBe(true);
     expect(categories.has('improvement')).toBe(true);
     expect(categories.has('verified_fixed')).toBe(true);
@@ -328,8 +328,9 @@ describe('Amazon Duaa AI Engineering Architect (المستشار الهندسي 
     const partialOpenRule = findings.find((f: any) =>
       String(f.rule_key).startsWith('firestore_partial_open_')
     );
-    expect(partialOpenRule).toBeTruthy();
-    expect(partialOpenRule.diagnosis_type).toBe('confirmed_vulnerability');
+    const openWildcardRule = findings.find((f: any) => f.rule_key === 'firestore_open_write_rules');
+    expect(partialOpenRule).toBeUndefined();
+    expect(openWildcardRule).toBeUndefined();
 
     // 4. Confidence scores & Confirmed vs Suspected distinction
     for (const f of findings) {
@@ -487,13 +488,41 @@ describe('Amazon Duaa AI Engineering Architect (المستشار الهندسي 
     expect(filteredOut).toBeNull();
 
     const { parseFirestoreRulesFull } = await import('../src/lib/engineering-static-analyzer.ts');
-    const rulesSummary = parseFirestoreRulesFull(
+    const liveRulesSummary = parseFirestoreRulesFull(
       fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8')
     );
-    expect(rulesSummary.productPublicWriteNode).toBeTruthy();
-    const productCreateOp = rulesSummary.productPublicWriteNode?.operations.find((op) =>
+    expect(liveRulesSummary.openWildcardNodes.length).toBe(0);
+    expect(liveRulesSummary.partialOpenNodes.length).toBe(0);
+    expect(liveRulesSummary.productPublicWriteNode).toBeTruthy();
+    const liveProductCreateOp = liveRulesSummary.productPublicWriteNode?.operations.find((op) =>
       op.verb.includes('create')
     );
-    expect(productCreateOp?.requires_auth).toBe(false);
+    expect(liveProductCreateOp?.requires_auth).toBe(true);
+
+    // Also verify structural parser detects open wildcards, partial open nodes, and unauthenticated writes on vulnerable rules
+    const vulnerableSample = `
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /supplier_ai_tasks/{document=**} {
+      allow read, write: if true;
+    }
+    match /ai_employee_drafts/{draftId} {
+      allow create: if request.auth != null;
+      allow update, delete: if true;
+    }
+    match /products/{productId} {
+      allow create: if isStaff() || (request.resource.data.original_price > 0);
+    }
+  }
+}
+`;
+    const sampleSummary = parseFirestoreRulesFull(vulnerableSample);
+    expect(sampleSummary.openWildcardNodes.length).toBe(1);
+    expect(sampleSummary.partialOpenNodes.length).toBe(1);
+    const sampleProductCreateOp = sampleSummary.productPublicWriteNode?.operations.find((op) =>
+      op.verb.includes('create')
+    );
+    expect(sampleProductCreateOp?.requires_auth).toBe(false);
   });
 });

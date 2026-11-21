@@ -181,6 +181,7 @@ export function saveStoredOrders(orders: Order[]): void {
 
 const ADMIN_TOKEN_KEY = 'amazon_duaa_admin_token_v1';
 let cachedFirebaseIdToken: string | null = null;
+let cachedAdminSessionToken: string | null = null;
 let firebaseTokenProvider: (() => Promise<string | null>) | null = null;
 
 function isJwtTokenExpired(token: string): boolean {
@@ -216,46 +217,54 @@ export function registerFirebaseTokenProvider(provider: () => Promise<string | n
 
 export function getAdminToken(): string | null {
   try {
-    const token = localStorage.getItem(ADMIN_TOKEN_KEY);
-    if (!token || token === 'undefined' || token === 'null') return null;
-    if (isJwtTokenExpired(token)) {
-      localStorage.removeItem(ADMIN_SESSION_KEY);
+    // Admin JWT is never stored in localStorage; purge any legacy localStorage token.
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(ADMIN_TOKEN_KEY) !== null) {
       localStorage.removeItem(ADMIN_TOKEN_KEY);
-      return null;
     }
-    return token;
+  } catch {
+    // Ignore storage errors
+  }
+  if (cachedAdminSessionToken && isJwtTokenExpired(cachedAdminSessionToken)) {
+    cachedAdminSessionToken = null;
+  }
+  return cachedAdminSessionToken;
+}
+
+export function getAdminSession(): AdminUser | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    if (localStorage.getItem(ADMIN_TOKEN_KEY) !== null) {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    }
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const { token: _ignoredToken, ...safeMetadata } = parsed;
+    return safeMetadata as AdminUser;
   } catch {
     return null;
   }
 }
 
-export function getAdminSession(): AdminUser | null {
-  try {
-    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-    const token = getAdminToken();
-    if (!raw || !token) return null;
-    const parsed = JSON.parse(raw);
-    parsed.token = token;
-    return parsed;
-  } catch (e) {
-    return null;
-  }
-}
-
 export function setAdminSession(user: AdminUser, token?: string): void {
+  if (token && token !== 'undefined' && token !== 'null' && !isJwtTokenExpired(token)) {
+    cachedAdminSessionToken = token;
+  }
   try {
-    const sessionToken = token || user.token;
-    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(user));
-    if (sessionToken) {
-      localStorage.setItem(ADMIN_TOKEN_KEY, sessionToken);
-    }
+    if (typeof localStorage === 'undefined') return;
+    const { token: _ignoredToken, ...safeMetadata } = user || ({} as AdminUser);
+    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(safeMetadata));
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
   } catch (e) {
     console.error('Error setting admin session:', e);
   }
 }
 
 export function clearAdminSession(): void {
+  cachedAdminSessionToken = null;
   try {
+    if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(ADMIN_SESSION_KEY);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
   } catch (e) {
@@ -263,18 +272,55 @@ export function clearAdminSession(): void {
   }
 }
 
-export function getAuthHeaders(): Record<string, string> {
+export function hasActiveAuthSession(): boolean {
+  if (cachedAdminSessionToken && isJwtTokenExpired(cachedAdminSessionToken)) {
+    cachedAdminSessionToken = null;
+  }
   if (cachedFirebaseIdToken && isJwtTokenExpired(cachedFirebaseIdToken)) {
     cachedFirebaseIdToken = null;
   }
-  const token = cachedFirebaseIdToken || getAdminToken();
-  if (token && token !== 'undefined' && token !== 'null') {
-    return { Authorization: `Bearer ${token}` };
+  return Boolean(cachedAdminSessionToken || cachedFirebaseIdToken || getAdminSession());
+}
+
+export async function hasActiveAuthSessionAsync(): Promise<boolean> {
+  if (cachedAdminSessionToken && !isJwtTokenExpired(cachedAdminSessionToken)) {
+    return true;
+  }
+  if (firebaseTokenProvider) {
+    try {
+      const freshToken = await firebaseTokenProvider();
+      if (freshToken && freshToken !== 'undefined' && freshToken !== 'null') {
+        cachedFirebaseIdToken = freshToken;
+        return true;
+      }
+    } catch {
+      // Fall back to cached token or HttpOnly admin session metadata
+    }
+  }
+  return hasActiveAuthSession();
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  if (cachedAdminSessionToken && isJwtTokenExpired(cachedAdminSessionToken)) {
+    cachedAdminSessionToken = null;
+  }
+  if (cachedAdminSessionToken) {
+    return { Authorization: `Bearer ${cachedAdminSessionToken}` };
+  }
+  if (cachedFirebaseIdToken && isJwtTokenExpired(cachedFirebaseIdToken)) {
+    cachedFirebaseIdToken = null;
+  }
+  if (cachedFirebaseIdToken && cachedFirebaseIdToken !== 'undefined' && cachedFirebaseIdToken !== 'null') {
+    return { Authorization: `Bearer ${cachedFirebaseIdToken}` };
   }
   return {};
 }
 
 export async function getAuthHeadersAsync(): Promise<Record<string, string>> {
+  if (cachedAdminSessionToken && !isJwtTokenExpired(cachedAdminSessionToken)) {
+    return { Authorization: `Bearer ${cachedAdminSessionToken}` };
+  }
+  cachedAdminSessionToken = null;
   if (firebaseTokenProvider) {
     try {
       const freshToken = await firebaseTokenProvider();
@@ -283,7 +329,7 @@ export async function getAuthHeadersAsync(): Promise<Record<string, string>> {
         return { Authorization: `Bearer ${freshToken}` };
       }
     } catch {
-      // Fall back to cached Firebase ID token or admin HMAC token
+      // Fall back to cached Firebase ID token; HttpOnly admin cookie is sent automatically by browser
     }
   }
   return getAuthHeaders();

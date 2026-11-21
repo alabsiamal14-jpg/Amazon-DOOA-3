@@ -228,6 +228,9 @@ export async function processServerCheckout(req: CheckoutRequest): Promise<Check
       if (!prod) {
         throw new Error(`المنتج بالمعرف "${item.product_id}" غير موجود في كتالوج المنتجات المعتمد في قاعدة البيانات. لا يُسمح بإنشاء أو نشر منتجات غير معتمدة أثناء إتمام الطلب.`);
       }
+      if (prod.status && prod.status !== 'published') {
+        throw new Error(`المنتج "${prod.titleAr}" غير معتمد للنشر في المتجر حالياً.`);
+      }
       const currentStock = Number(prod.stockQuantity) || 0;
       const requestedQty = Math.max(1, Math.floor(Number(item.quantity) || 1));
       if (currentStock < requestedQty || currentStock <= 0) {
@@ -378,6 +381,9 @@ export async function processServerCheckout(req: CheckoutRequest): Promise<Check
 
       if (!prod) {
         throw new Error(`المنتج بالمعرف "${item.product_id}" غير موجود في كتالوج المنتجات المعتمد في قاعدة البيانات. لا يُسمح بإنشاء أو نشر منتجات غير معتمدة أثناء إتمام الطلب.`);
+      }
+      if (prod.status && prod.status !== 'published') {
+        throw new Error(`المنتج "${prod.titleAr}" غير معتمد للنشر في المتجر حالياً.`);
       }
 
       const currentStock = Number(prod.stockQuantity) || 0;

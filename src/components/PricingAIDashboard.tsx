@@ -23,7 +23,7 @@ import {
   FileText,
   DollarSign
 } from 'lucide-react';
-import { getAuthHeadersAsync } from '../lib/storage';
+import { getAuthHeadersAsync, hasActiveAuthSessionAsync } from '../lib/storage';
 import { PricingConversation, PricingMessage, SupplierRegistryItem, PriceObservation } from '../features/pricing-ai/types';
 
 export const PricingAIDashboard: React.FC = () => {
@@ -113,8 +113,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch conversations
   const loadConversations = async () => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/conversations', {
         headers: authHeaders
       });
@@ -133,8 +133,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch messages
   const loadMessages = async (convId: string) => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}/messages`, {
         headers: authHeaders
       });
@@ -150,8 +150,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch suppliers
   const loadSuppliers = async () => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/suppliers', {
         headers: authHeaders
       });
@@ -167,8 +167,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch price history for specific supplier
   const loadSupplierPrices = async (supplierId: string) => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/suppliers/${supplierId}/prices`, {
         headers: authHeaders
       });
@@ -184,8 +184,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Fetch all price observations
   const loadObservations = async () => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/prices/observations', {
         headers: authHeaders
       });
@@ -202,8 +202,8 @@ export const PricingAIDashboard: React.FC = () => {
   const handleNewConversation = async () => {
     setIsCreatingConv(true);
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch('/api/pricing-ai/conversations', {
         method: 'POST',
         headers: {
@@ -232,8 +232,8 @@ export const PricingAIDashboard: React.FC = () => {
     if (!window.confirm('هل أنتِ متأكدة من حذف هذه المحادثة وجميع رسائلها؟')) return;
 
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}`, {
         method: 'DELETE',
         headers: authHeaders
@@ -260,8 +260,8 @@ export const PricingAIDashboard: React.FC = () => {
   const handleSaveRename = async (convId: string) => {
     if (!editingTitle.trim()) return;
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
       const res = await fetch(`/api/pricing-ai/conversations/${convId}`, {
         method: 'PUT',
         headers: {
@@ -330,8 +330,8 @@ export const PricingAIDashboard: React.FC = () => {
     setMessages(prev => [...prev, tempUserMsg]);
 
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
 
       const res = await fetch(`/api/pricing-ai/conversations/${activeConvId}/messages`, {
         method: 'POST',
@@ -368,8 +368,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Approve price observation
   const handleApprovePrice = async (obsId: string) => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/prices/approve', {
         method: 'POST',
@@ -398,8 +398,8 @@ export const PricingAIDashboard: React.FC = () => {
   // Reject price observation
   const handleRejectPrice = async (obsId: string) => {
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/prices/reject', {
         method: 'POST',
@@ -429,8 +429,8 @@ export const PricingAIDashboard: React.FC = () => {
   const handleDeletePrice = async (obsId: string) => {
     if (!window.confirm('هل تريد حذف سجل السعر هذا نهائياً من أرشيف الأسعار؟')) return;
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
 
       const res = await fetch(`/api/pricing-ai/prices/${obsId}`, {
         method: 'DELETE',
@@ -458,8 +458,8 @@ export const PricingAIDashboard: React.FC = () => {
     }
 
     try {
+      if (!(await hasActiveAuthSessionAsync())) return;
       const authHeaders = await getAuthHeadersAsync();
-      if (!authHeaders.Authorization) return;
 
       const res = await fetch('/api/pricing-ai/suppliers', {
         method: 'POST',

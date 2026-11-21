@@ -361,4 +361,118 @@ describe('Amazon Duaa API Health & Security Audit', () => {
       .set('Authorization', `Bearer ${validAdminToken}`);
     expect(cleanupRes.status).toBe(200);
   });
+
+  it('HttpOnly cookie session authenticates admin routes, blocks cross-origin CSRF, and revokes on logout', async () => {
+    // 1. Login issues HttpOnly cookie
+    const loginRes = await request(app)
+      .post('/api/admin/login')
+      .send({ username: testAdminUser, password: testAdminPass });
+    expect(loginRes.status).toBe(200);
+    const setCookies = loginRes.headers['set-cookie'] as unknown as string[];
+    expect(Array.isArray(setCookies)).toBe(true);
+    const sessionCookie = setCookies.find((c) => c.startsWith('amazon_duaa_admin_session='));
+    expect(sessionCookie).toBeDefined();
+    expect(sessionCookie).toContain('HttpOnly');
+
+    const cookiePair = sessionCookie!.split(';')[0];
+
+    // 2. Cookie alone authenticates GET /api/admin/verify without Authorization header
+    const verifyRes = await request(app)
+      .get('/api/admin/verify')
+      .set('Cookie', cookiePair);
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.ok).toBe(true);
+
+    // 3. Cross-site Origin on cookie-authenticated mutation is blocked with 403 CSRF
+    const csrfBlocked = await request(app)
+      .post('/api/admin/firebase-session')
+      .set('Host', 'shop.example.com')
+      .set('Origin', 'https://evil-attacker.example.com')
+      .set('Cookie', cookiePair);
+    expect(csrfBlocked.status).toBe(403);
+
+    // 4. Logout clears cookie AND revokes token on server
+    const logoutRes = await request(app)
+      .post('/api/admin/logout')
+      .set('Cookie', cookiePair);
+    expect(logoutRes.status).toBe(200);
+
+    const postLogoutVerify = await request(app)
+      .get('/api/admin/verify')
+      .set('Cookie', cookiePair);
+    expect(postLogoutVerify.status).toBe(401);
+
+    // 5. Same Bearer token extracted from loginRes.body.token is also revoked
+    const postLogoutBearer = await request(app)
+      .get('/api/admin/verify')
+      .set('Authorization', `Bearer ${loginRes.body.token}`);
+    expect(postLogoutBearer.status).toBe(401);
+  });
+
+  it('GET /api/admin/verify rejects staff role with 403 and staff cannot overwrite published products', async () => {
+    vi.spyOn(adminAuth, 'verifyIdToken').mockResolvedValue({
+      uid: 'staff-uid-strict',
+      email: 'staff-strict@example.com',
+      email_verified: true,
+    } as any);
+    vi.spyOn(usersDb, 'getUserByUid').mockResolvedValue({
+      id: 202,
+      uid: 'staff-uid-strict',
+      email: 'staff-strict@example.com',
+      displayName: 'موظف مقيد',
+      role: 'staff',
+      createdAt: new Date(),
+    });
+
+    const verifyStaffRes = await request(app)
+      .get('/api/admin/verify')
+      .set('Authorization', 'Bearer mock-staff-strict');
+    expect(verifyStaffRes.status).toBe(403);
+
+    // Attempt to overwrite existing published product (prod-1)
+    const overwritePublishedRes = await request(app)
+      .post('/api/db/products')
+      .set('Authorization', 'Bearer mock-staff-strict')
+      .send({
+        id: 'prod-1',
+        title_ar: 'محاولة تغيير منتج منشور',
+        original_price: 1,
+      });
+    expect(overwritePublishedRes.status).toBe(403);
+  });
+
+  it('POST /api/db/products/public blocks overwriting existing products, non-visitor IDs, and unsafe image schemes', async () => {
+    const hijackExisting = await request(app).post('/api/db/products/public').send({
+      id: 'prod-1',
+      title_ar: 'محاولة استبدال منتج متجر',
+      original_price: 5,
+      image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
+    });
+    expect(hijackExisting.status).toBe(400);
+
+    const unsafeImg = await request(app).post('/api/db/products/public').send({
+      id: `visitor-prod-unsafe-${Date.now()}`,
+      title_ar: 'منتج بصورة غير آمنة',
+      original_price: 50,
+      image_url: 'javascript:alert(1)',
+    });
+    expect(unsafeImg.status).toBe(400);
+
+    const uniqueId = `visitor-prod-uniq-${Date.now()}`;
+    const firstCreate = await request(app).post('/api/db/products/public').send({
+      id: uniqueId,
+      title_ar: 'منتج زائر فريد',
+      original_price: 85,
+      image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
+    });
+    expect(firstCreate.status).toBe(200);
+
+    const duplicateOverwrite = await request(app).post('/api/db/products/public').send({
+      id: uniqueId,
+      title_ar: 'تعديل غير مصرح لنفس المعرف',
+      original_price: 1,
+      image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
+    });
+    expect(duplicateOverwrite.status).toBe(409);
+  });
 });

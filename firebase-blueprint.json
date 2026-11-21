@@ -213,6 +213,7 @@
         "price": { "type": "number" },
         "original_price": { "type": "number" },
         "discount_price": { "type": "number" },
+        "stock_quantity": { "type": "number" },
         "pricing_status_label": { "type": "string", "maxLength": 120 },
         "status": {
           "type": "string",

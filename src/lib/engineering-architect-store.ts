@@ -155,7 +155,7 @@ export function resetEngineeringArchitectTestState(): void {
 // =========================================================================
 
 const SECRET_FILENAME_RE =
-  /(^|\/)(\.env($|\.)|.*service[-_]?account.*\.json$|.*firebase[-_]?adminsdk.*\.json$|\.npmrc$|\.git\/)/i;
+  /(^|\/)(\.env($|\.)|.*service[-_]?account.*\.json$|.*firebase[-_]?adminsdk.*\.json$|\.npmrc$|\.git\/|backups\/|data\/)/i;
 
 const WRITE_PROTECTED_FILES = new Set<string>([
   // Existing Developer Advisor (STRICTLY UNTOUCHABLE)
@@ -176,6 +176,7 @@ const WRITE_PROTECTED_FILES = new Set<string>([
 ]);
 
 const WRITE_PROTECTED_PREFIXES = [
+  'backups/',
   'data/',
   'uploads/',
   'node_modules/',
@@ -186,6 +187,7 @@ const WRITE_PROTECTED_PREFIXES = [
 ];
 
 const READ_IGNORE_DIRS = new Set([
+  'backups',
   'node_modules',
   '.git',
   'dist',

@@ -29,7 +29,7 @@ import {
   setLogLevel,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Product, CartItem, Order, OrderStatus, UserProfile } from '../types';
+import { Product, CartItem, Order, OrderStatus, UserProfile, EmployeeDraft } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialData';
 import {
   getStoredProducts,
@@ -41,7 +41,7 @@ import {
   setFirebaseIdToken,
   registerFirebaseTokenProvider,
   getAuthHeadersAsync,
-  getAdminToken,
+  getAdminSession,
 } from './storage';
 
 // =========================================================================
@@ -724,7 +724,7 @@ export async function fetchProductsFirestore(): Promise<{
         contact_phone: d.contact_phone || undefined,
         created_at: d.createdAt || d.created_at || new Date().toISOString(),
         featured: Boolean(d.featured),
-        status: d.status === 'draft' ? 'draft' : 'published',
+        status: d.status && d.status !== 'published' ? 'draft' : 'published',
         creator_id: d.creator_id,
       });
     });
@@ -851,11 +851,12 @@ export async function saveProductFirestore(product: Product): Promise<void> {
     );
   } catch (err: any) {
     // Only try staff/admin backend fallback when an authenticated session exists
-    if (auth.currentUser || getAdminToken()) {
+    if (auth.currentUser || getAdminSession()) {
       try {
         const authHeaders = await getAuthHeadersAsync();
         const res = await fetch('/api/db/products', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify(normalizedProduct),
         });
@@ -876,11 +877,12 @@ export async function deleteProductFirestore(productId: string): Promise<void> {
   try {
     await withFirestoreTimeout(deleteDoc(doc(db, 'products', productId)), 10000);
   } catch (err: any) {
-    if (auth.currentUser || getAdminToken()) {
+    if (auth.currentUser || getAdminSession()) {
       try {
         const authHeaders = await getAuthHeadersAsync();
         const res = await fetch(`/api/db/products/${encodeURIComponent(productId)}`, {
           method: 'DELETE',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
         });
         if (res.ok) {
@@ -1083,3 +1085,56 @@ export async function updateUserProfileRole(uid: string, role: 'admin' | 'staff'
     throw err;
   }
 }
+
+export async function syncEmployeeDraftFirestore(draft: EmployeeDraft): Promise<boolean> {
+  if (!auth.currentUser || !draft?.id) return false;
+  try {
+    await withFirestoreTimeout(
+      setDoc(
+        doc(db, 'ai_employee_drafts', draft.id),
+        {
+          ...draft,
+          stock_quantity: draft.stock_quantity ?? 10,
+          published_product_id: draft.published_product_id || null,
+        },
+        { merge: true }
+      ),
+      5000
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteEmployeeDraftFirestore(draftId: string): Promise<boolean> {
+  if (!auth.currentUser || !draftId) return false;
+  try {
+    await withFirestoreTimeout(deleteDoc(doc(db, 'ai_employee_drafts', draftId)), 5000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchEmployeeDraftsFirestore(): Promise<EmployeeDraft[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const snap = await withFirestoreTimeout(getDocs(collection(db, 'ai_employee_drafts')), 5000);
+    const items: EmployeeDraft[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as Record<string, any>;
+      if (data && data.title_ar) {
+        items.push({
+          ...(data as EmployeeDraft),
+          id: docSnap.id,
+        });
+      }
+    });
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+

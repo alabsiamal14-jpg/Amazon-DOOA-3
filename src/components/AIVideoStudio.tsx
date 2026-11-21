@@ -29,6 +29,20 @@ import {
 import { Category, Product, StoreSettings } from '../types';
 import { getAuthHeadersAsync } from '../lib/storage';
 
+function getSafeMediaHref(url?: string | null): string | undefined {
+  if (!url || typeof url !== 'string') return undefined;
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('blob:') ||
+    (trimmed.startsWith('/') && !trimmed.startsWith('//'))
+  ) {
+    return trimmed;
+  }
+  return undefined;
+}
+
 export interface VideoBatchItem {
   id: string;
   file?: File;
@@ -1139,9 +1153,9 @@ export const AIVideoStudio: React.FC<AIVideoStudioProps> = ({
                         <span>معاينة وتعديل</span>
                       </button>
 
-                      {item.renderedClipUrl && (
+                      {getSafeMediaHref(item.renderedClipUrl) && (
                         <a
-                          href={item.renderedClipUrl}
+                          href={getSafeMediaHref(item.renderedClipUrl)}
                           download={`${item.title_ar}-5s.webm`}
                           className="text-[11px] text-stone-700 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 p-1.5 rounded-xl transition-colors"
                           title="تنزيل المقطع 5s"
@@ -1437,9 +1451,9 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center justify-between gap-3 pt-2">
-          {video.renderedClipUrl && (
+          {getSafeMediaHref(video.renderedClipUrl) && (
             <a
-              href={video.renderedClipUrl}
+              href={getSafeMediaHref(video.renderedClipUrl)}
               download={`${video.title_ar}-5s.webm`}
               className="px-4 py-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
             >

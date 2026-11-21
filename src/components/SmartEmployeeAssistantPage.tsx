@@ -30,8 +30,10 @@ import type {
 import {
   clearEmployeeSession,
   getAuthHeaders,
+  getAuthHeadersAsync,
   getEmployeeAuthHeaders,
   getEmployeeSession,
+  hasActiveAuthSession,
   setEmployeeSession,
 } from '../lib/storage';
 import { compressImageFileToDataUrl } from '../lib/imageCompression';
@@ -144,7 +146,7 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
       id: 'welcome-1',
       role: 'assistant',
       timestamp: new Date().toISOString(),
-      text: `أهلاً بك في 🤖 المساعد الذكي للموظفين بمتجر "${settings.storeName}".\nاختر طريقة الإدخال أدناه (صورة واحدة، عدة صور لنفس المنتج، دفعة منتجات، فيديو كتالوج المورد، أو محادثة واتساب)، وسأقوم بتحليلها بـ Gemini AI وتجهيز مسودات كاملة بدون أسعار — وتُرسل مباشرة إلى الإدارة للتسعير والنشر.`,
+      text: `أهلاً بك في 🤖 المساعد الذكي للموظفين بمتجر "${settings.storeName}".\nاختر طريقة الإدخال أدناه (صورة واحدة، عدة صور لنفس المنتج، دفعة منتجات، فيديو كتالوج المورد، أو محادثة واتساب)، وسأقوم بتحليلها بـ Gemini AI وتجهيز بيانات المنتج بدون سعر — وتظهر تلقائياً في قسم «منتجات مساعد الموظفين» بلوحة تحكم المدير للمراجعة والتسعير والنشر.`,
     },
   ]);
 
@@ -159,6 +161,13 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
     return {};
   };
 
+  const effectiveAuthHeadersAsync = async (): Promise<Record<string, string>> => {
+    const empHeaders = getEmployeeAuthHeaders();
+    if (empHeaders.Authorization) return empHeaders;
+    if (isAdminLoggedIn) return await getAuthHeadersAsync();
+    return {};
+  };
+
   const hasAccess = Boolean(employeeSession?.token || isAdminLoggedIn);
 
   useEffect(() => {
@@ -166,11 +175,14 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
   }, [messages, isAnalyzing]);
 
   const fetchMyDrafts = async () => {
-    const headers = effectiveAuthHeaders();
-    if (!headers.Authorization) return;
+    const headers = await effectiveAuthHeadersAsync();
+    if (!headers.Authorization && !(isAdminLoggedIn && hasActiveAuthSession())) return;
     setLoadingDrafts(true);
     try {
-      const res = await fetch('/api/employee-assistant/drafts', { headers });
+      const res = await fetch('/api/employee-assistant/drafts', {
+        credentials: 'include',
+        headers,
+      });
       if (res.ok) {
         const data = await res.json();
         setMyDrafts(Array.isArray(data.drafts) ? data.drafts : []);
@@ -299,7 +311,7 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
     setIsAnalyzing(true);
 
     try {
-      const headers = effectiveAuthHeaders();
+      const headers = await effectiveAuthHeadersAsync();
       let res: Response;
 
       if (currentVideo) {
@@ -310,6 +322,7 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
         res = await fetch('/api/employee-assistant/analyze', {
           method: 'POST',
           headers,
+          credentials: 'include',
           body: fd,
         });
       } else {
@@ -319,6 +332,7 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
             'Content-Type': 'application/json',
             ...headers,
           },
+          credentials: 'include',
           body: JSON.stringify({
             mode: currentMode,
             chatText: trimmedText,
@@ -377,10 +391,11 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
     );
 
     try {
-      const headers = effectiveAuthHeaders();
+      const headers = await effectiveAuthHeadersAsync();
       const res = await fetch('/api/employee-assistant/drafts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
+        credentials: 'include',
         body: JSON.stringify({
           title_ar: candidate.title_ar,
           description_ar: candidate.description_ar,
@@ -884,7 +899,7 @@ export const SmartEmployeeAssistantPage: React.FC<SmartEmployeeAssistantPageProp
                               ) : draft._saved ? (
                                 <>
                                   <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>تم الحفظ كمسودة للإدارة</span>
+                                  <span>تم الحفظ في «منتجات مساعد الموظفين»</span>
                                 </>
                               ) : (
                                 <>

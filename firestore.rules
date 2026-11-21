@@ -1,10 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // دالة للتحقق من البريد الموثق للمالك السيادي
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // التحقق من البريد الموثق للمالك السيادي
     function isSovereignAdmin() {
-      return request.auth != null
+      return isSignedIn()
         && ('email' in request.auth.token)
         && request.auth.token.email_verified == true
         && request.auth.token.email.lower() == 'omralabis@gmail.com';
@@ -12,164 +25,191 @@ service cloud.firestore {
 
     // قراءة الدور من وثيقة المستخدم (RBAC)
     function userHasRole(roles) {
-      return request.auth != null
+      return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in roles;
     }
 
-    // دالة للتحقق من صلاحية المدير (Admin)
+    // صلاحية المدير (Admin)
     function isAdmin() {
-      return isSovereignAdmin() || userHasRole(['admin']);
+      return isSovereignAdmin()
+        || userHasRole(['admin'])
+        || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
-    // دالة للتحقق من صلاحية الموظف (Staff)
+    // صلاحية الموظف أو المدير (Staff / Admin)
     function isStaff() {
       return isSovereignAdmin() || userHasRole(['admin', 'staff']);
     }
 
-    // دالة للتحقق من صلاحية مندوب التوصيل (Driver)
+    // صلاحية مندوب التوصيل أو المدير (Driver / Admin)
     function isDriver() {
       return isSovereignAdmin() || userHasRole(['admin', 'driver']);
     }
 
+    // فحص اتصال القاعدة الخفيف
+    match /test/connection {
+      allow get: if true;
+    }
+
     // Admins: تقييد الوصول لقائمة المدراء بالمدراء المعتمدين فقط
     match /admins/{adminId} {
-      allow read, write: if isAdmin();
+      allow get, list: if isAdmin();
+      allow create, update, delete: if isValidId(adminId) && isAdmin();
     }
 
-    // Orders: حماية الطلبات ودعم الطلبات المشتركة لفريق العمل (Staff/Admin/Driver) والعملاء لمشترياتهم فقط
+    // Orders: حماية الطلبات، منع الإنشاء المجهول غير الموثق، وتقييد حقول تعديل المندوب
     match /orders/{orderId} {
-      allow get: if request.auth != null && (request.auth.uid == resource.data.userId || isStaff() || isDriver());
-      allow list: if isStaff() || isDriver() || (request.auth != null && resource.data.userId == request.auth.uid);
-      allow create: if (
-          (request.auth != null && request.resource.data.userId == request.auth.uid) ||
-          (request.resource.data.userId == 'guest' || !('userId' in request.resource.data))
-        )
+      allow get: if isValidId(orderId) && isSignedIn() && (request.auth.uid == resource.data.userId || isStaff() || isDriver());
+      allow list: if isStaff() || isDriver() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(orderId)
+        && isSignedIn()
+        && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
         && request.resource.data.total_amount is number
-        && request.resource.data.customer_name is string;
-      allow update: if isStaff() || isDriver();
-      allow delete: if isAdmin();
+        && request.resource.data.total_amount >= 0
+        && request.resource.data.customer_name is string
+        && request.resource.data.customer_name.size() > 0
+        && request.resource.data.customer_name.size() <= 150;
+      allow update: if isValidId(orderId) && (
+        isStaff()
+        || (
+          isDriver()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status',
+            'delivery_status',
+            'driver_name',
+            'driver_phone',
+            'driver_notes',
+            'cod_collected',
+            'cod_collected_amount',
+            'delivered_at',
+            'updatedAt'
+          ])
+        )
+      );
+      allow delete: if isValidId(orderId) && isAdmin();
     }
 
-    // Products: قراءة عامة، إنشاء وتعديل متاحان مع التحقق من صحة الحقول لدعم إضافة المنتجات للجميع، والحذف محصور بالإدارة
+    // Products: قراءة عامة للمتجر، والإنشاء والتعديل والحذف محصورة بالموظفين والمدراء فقط
     match /products/{productId} {
       allow read: if true;
-      allow create, update: if isStaff() || (
-        request.resource.data.title_ar is string
-        && request.resource.data.title_ar.size() > 0
-        && request.resource.data.title_ar.size() <= 300
-        && request.resource.data.original_price is number
-        && request.resource.data.original_price > 0
-      );
-      allow delete: if isStaff();
-    }
-
-    // Users: المستخدم يعدل حسابه فقط، دون تغيير أو ترقية الـ role، والأدمن يملك الصلاحية الكاملة
-    match /users/{userId} {
-      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
-      allow create: if request.auth != null && request.auth.uid == userId 
-        && (!request.resource.data.keys().hasAll(['role']) || request.resource.data.role == 'customer');
-      allow update: if request.auth != null && (
-        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
-        || isAdmin()
-      );
-      allow delete: if isAdmin();
-    }
-
-    // Cart & Favorites: خاصة بالمستخدم فقط
-    match /users/{userId}/cart/{itemId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-    match /users/{userId}/favorites/{productId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Reviews: إنشاء للمستخدم، قراءة عامة، إدارة للأدمن
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null && (request.auth.uid == resource.data.userId || isAdmin());
-    }
-
-    // Supplier Intelligence Hub & Pricing AI: قراءة وكتابة لدعم لوحة الإدارة ومستشار الذكاء الاصطناعي
-    match /supplier_ai_suppliers/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_supplier_products/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_price_observations/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_conversations/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_messages/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_product_drafts/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_product_drafts/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_imports/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_supplier_documents/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_ai_purchase_links/{document=**} {
-      allow read, write: if true;
-    }
-
-    // Pricing AI & Supplier Memory
-    match /pricing_ai_conversations/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_messages/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_price_observations/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_settings/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_import_records/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_recommendations/{document=**} {
-      allow read, write: if true;
-    }
-    match /pricing_ai_purchase_groups/{document=**} {
-      allow read, write: if true;
-    }
-
-    // Legacy suppliers and submission staging rules
-    match /suppliers/{document=**} {
-      allow read, write: if true;
-    }
-    match /supplier_submissions/{document=**} {
-      allow read, write: if true;
-    }
-
-    // Smart Employee Assistant Drafts:
-    // Creation enforces employee_code (EMP001-EMP008 or ADMIN), status == 'pending_pricing', and price == null.
-    // Drafts never appear in /products until an Admin sets a valid price and publishes via backend.
-    match /ai_employee_drafts/{draftId} {
-      allow read: if true;
-      allow create: if draftId.matches('^[a-zA-Z0-9_\\-]+$')
+      allow create, update: if isValidId(productId)
+        && isStaff()
         && request.resource.data.title_ar is string
         && request.resource.data.title_ar.size() > 0
         && request.resource.data.title_ar.size() <= 300
-        && request.resource.data.employee_code in ['EMP001', 'EMP002', 'EMP003', 'EMP004', 'EMP005', 'EMP006', 'EMP007', 'EMP008', 'ADMIN']
-        && request.resource.data.price == null
-        && request.resource.data.original_price == null
-        && request.resource.data.status == 'pending_pricing';
-      allow update, delete: if true;
+        && request.resource.data.original_price is number
+        && request.resource.data.original_price > 0;
+      allow delete: if isValidId(productId) && isStaff();
+    }
+
+    // Users: المستخدم يعدل حسابه فقط دون ترقية role، والأدمن يملك الصلاحية الكاملة
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isSignedIn()
+        && request.auth.uid == userId
+        && (!('role' in request.resource.data) || request.resource.data.role == 'customer');
+      allow update: if isValidId(userId) && isSignedIn() && (
+        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+        || isAdmin()
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Cart & Favorites: خاصة بصاحب الحساب فقط
+    match /users/{userId}/cart/{itemId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+    match /users/{userId}/favorites/{productId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Reviews: قراءة عامة، الإنشاء للمستخدم الموثق مع تحقق التقييم، والإدارة للأدمن
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isValidId(reviewId)
+        && isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.comment is string
+        && request.resource.data.comment.size() <= 1000;
+      allow update, delete: if isValidId(reviewId) && isSignedIn() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    // Supplier Intelligence Hub & Pricing AI: محصورة بالكامل بالمدير (isAdmin)
+    match /supplier_ai_suppliers/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_supplier_products/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_price_observations/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_conversations/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_messages/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_product_drafts/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_product_drafts/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_imports/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_supplier_documents/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_ai_purchase_links/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Pricing AI & Supplier Memory: محصورة بالكامل بالمدير (isAdmin)
+    match /pricing_ai_conversations/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_messages/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_price_observations/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_settings/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_import_records/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_recommendations/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /pricing_ai_purchase_groups/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Legacy suppliers and submission staging rules: محصورة بالمدير (isAdmin)
+    match /suppliers/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    match /supplier_submissions/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Smart Employee Assistant Drafts: القراءة والإنشاء والتعديل والحذف محصورة بالمدير (تُدار مسودات الموظفين عبر خادم Express المحمي)
+    match /ai_employee_drafts/{draftId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if isValidId(draftId) && isAdmin();
     }
   }
 }

@@ -47,8 +47,95 @@ export function hasRole(user: AuthUser | undefined, allowedRoles: Array<AuthUser
   return allowedRoles.includes(user.role);
 }
 
+export const ADMIN_SESSION_COOKIE_NAME = 'amazon_duaa_admin_session';
+
+// Server-side revocation store (keyed by jti -> expiration timestamp ms)
+const revokedAdminJtis = new Map<string, number>();
+
+function pruneRevokedAdminTokens(): void {
+  const now = Date.now();
+  for (const [jti, exp] of revokedAdminJtis.entries()) {
+    if (exp <= now) {
+      revokedAdminJtis.delete(jti);
+    }
+  }
+}
+
+export function revokeAdminToken(token: string): boolean {
+  try {
+    pruneRevokedAdminTokens();
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const exp = typeof decoded?.exp === 'number' ? decoded.exp : Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const key =
+      typeof decoded?.jti === 'string' && decoded.jti
+        ? decoded.jti
+        : crypto.createHash('sha256').update(token).digest('hex');
+    revokedAdminJtis.set(key, exp);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearRevokedAdminTokensForTest(): void {
+  revokedAdminJtis.clear();
+}
+
+export function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!cookieHeader || typeof cookieHeader !== 'string') return result;
+  for (const pair of cookieHeader.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    const val = pair.slice(idx + 1).trim();
+    if (!key) continue;
+    try {
+      result[key] = decodeURIComponent(val);
+    } catch {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+export function extractAdminCookieToken(req: Request): string | null {
+  const cookies = parseCookieHeader(req.headers.cookie);
+  const raw = cookies[ADMIN_SESSION_COOKIE_NAME];
+  if (!raw || raw === 'undefined' || raw === 'null') return null;
+  return raw.trim() || null;
+}
+
+function isCookieCsrfValid(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return true;
+  }
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (!hostHeader) return true;
+
+  const originHeader = req.headers.origin;
+  const refererHeader = req.headers.referer;
+  const sourceUrl = originHeader || refererHeader;
+  // Require matching Origin/Referer when present on cookie-authenticated mutations
+  if (!sourceUrl) {
+    return true;
+  }
+  try {
+    const parsed = new URL(sourceUrl);
+    return parsed.host.toLowerCase() === hostHeader;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Creates an HMAC-SHA256 signed admin session token.
+ * Creates an HMAC-SHA256 signed admin session token with a unique jti for revocation.
  * Requires ADMIN_JWT_SECRET or SESSION_SECRET in environment variables.
  * Token format: base64url(header).base64url(payload).signature
  */
@@ -60,11 +147,13 @@ export function createAdminToken(username: string): string {
 
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const exp = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days expiry
+  const jti = crypto.randomUUID();
   const payload = Buffer.from(
     JSON.stringify({
       sub: username,
       role: 'admin',
       email: SOVEREIGN_ADMIN_EMAIL,
+      jti,
       exp,
     })
   ).toString('base64url');
@@ -79,7 +168,7 @@ export function createAdminToken(username: string): string {
 
 /**
  * Verifies an HMAC-SHA256 signed admin session token.
- * Returns decoded AuthUser if valid and not expired, null otherwise.
+ * Returns decoded AuthUser if valid, not revoked, and not expired, null otherwise.
  */
 export function verifyAdminToken(token: string): AuthUser | null {
   try {
@@ -107,6 +196,14 @@ export function verifyAdminToken(token: string): AuthUser | null {
     }
     if (decoded.role === 'employee') {
       return null; // Employee tokens must NEVER satisfy verifyAdminToken
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    if (
+      (typeof decoded.jti === 'string' && revokedAdminJtis.has(decoded.jti)) ||
+      revokedAdminJtis.has(tokenHash)
+    ) {
+      return null; // Revoked via logout
     }
 
     return {
@@ -267,7 +364,8 @@ export async function resolveAuthenticatedUser(token: string): Promise<AuthUser 
 
 /**
  * Core Authentication Middleware:
- * Strictly verifies either a signed admin session token or a valid Firebase ID token.
+ * Strictly verifies either a Bearer token (Firebase ID token / Admin / Employee JWT)
+ * or an HttpOnly signed Admin session cookie (with CSRF Origin validation on mutations).
  * Rejects any unauthenticated or invalid request with HTTP 401.
  */
 export const requireAuth = async (
@@ -276,26 +374,47 @@ export const requireAuth = async (
   next: NextFunction
 ) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const bearerToken =
+    authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split('Bearer ')[1]?.trim()
+      : undefined;
+  const cookieToken = extractAdminCookieToken(req);
+
+  if (
+    (!bearerToken || bearerToken === 'undefined' || bearerToken === 'null') &&
+    !cookieToken
+  ) {
     return res.status(401).json({ error: 'Unauthorized: Authentication token is required' });
   }
 
-  const token = authHeader.split('Bearer ')[1]?.trim();
-  if (!token || token === 'undefined' || token === 'null') {
-    return res.status(401).json({ error: 'Unauthorized: Invalid token format' });
+  if (bearerToken && bearerToken !== 'undefined' && bearerToken !== 'null') {
+    try {
+      const user = await resolveAuthenticatedUser(bearerToken);
+      if (user) {
+        req.user = user;
+        return next();
+      }
+    } catch (error: any) {
+      console.warn('[Auth Middleware] Bearer verification notice:', error?.message || error);
+    }
   }
 
-  try {
-    const user = await resolveAuthenticatedUser(token);
-    if (!user) {
-      return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+  if (cookieToken) {
+    if (!isCookieCsrfValid(req)) {
+      return res.status(403).json({ error: 'Forbidden: Cross-site request blocked (CSRF)' });
     }
-    req.user = user;
-    return next();
-  } catch (error: any) {
-    console.warn('[Auth Middleware] Authentication failed:', error.message);
-    return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    try {
+      const cookieUser = await resolveAuthenticatedUser(cookieToken);
+      if (cookieUser) {
+        req.user = cookieUser;
+        return next();
+      }
+    } catch (error: any) {
+      console.warn('[Auth Middleware] Cookie verification notice:', error?.message || error);
+    }
   }
+
+  return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
 };
 
 /**
@@ -306,6 +425,21 @@ export const requireRoles = (...allowedRoles: Array<AuthUser['role']>) => {
     await requireAuth(req, res, () => {
       if (hasRole(req.user, allowedRoles)) {
         return next();
+      }
+      // If a lower-privileged Bearer token (e.g. Firebase customer) was sent alongside a valid HttpOnly Admin cookie,
+      // allow the verified Admin cookie on admin-authorized endpoints after CSRF check.
+      if (allowedRoles.includes('admin')) {
+        const cookieToken = extractAdminCookieToken(req);
+        if (cookieToken) {
+          if (!isCookieCsrfValid(req)) {
+            return res.status(403).json({ error: 'Forbidden: Cross-site request blocked (CSRF)' });
+          }
+          const adminFromCookie = verifyAdminToken(cookieToken);
+          if (adminFromCookie) {
+            req.user = adminFromCookie;
+            return next();
+          }
+        }
       }
       return res.status(403).json({ error: 'Forbidden: Insufficient RBAC privileges' });
     });
