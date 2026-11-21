@@ -305,4 +305,60 @@ describe('Amazon Duaa API Health & Security Audit', () => {
     expect(res.status).toBe(401);
     expect(verifySpy).not.toHaveBeenCalled();
   });
+
+  it('Enforces server-side RBAC on product creation and publishing (staff forced to draft, PATCH status admin-only)', async () => {
+    const staffProdId = `staff-rbac-prod-${Date.now()}`;
+
+    // Mock Firebase token as staff user
+    vi.spyOn(adminAuth, 'verifyIdToken').mockResolvedValue({
+      uid: 'staff-uid-1',
+      email: 'staff1@example.com',
+      email_verified: true,
+    } as any);
+    vi.spyOn(usersDb, 'getUserByUid').mockResolvedValue({
+      id: 201,
+      uid: 'staff-uid-1',
+      email: 'staff1@example.com',
+      displayName: 'موظف متجر',
+      role: 'staff',
+      createdAt: new Date(),
+    });
+
+    // 1. Staff tries to POST /api/db/products with status: 'published' -> forced to 'draft'
+    const staffCreateRes = await request(app)
+      .post('/api/db/products')
+      .set('Authorization', 'Bearer mock-staff-token')
+      .send({
+        id: staffProdId,
+        title_ar: 'منتج اختبار صلاحيات الموظف',
+        original_price: 99,
+        stock_quantity: 5,
+        status: 'published',
+        creator_id: 'someone-else',
+      });
+    expect(staffCreateRes.status).toBe(200);
+    expect(staffCreateRes.body.status).toBe('draft');
+    expect(staffCreateRes.body.creatorId).toBe('staff-uid-1');
+
+    // 2. Staff tries to PATCH /api/db/products/:id/status -> rejected with 403
+    const staffPatchRes = await request(app)
+      .patch(`/api/db/products/${staffProdId}/status`)
+      .set('Authorization', 'Bearer mock-staff-token')
+      .send({ status: 'published' });
+    expect(staffPatchRes.status).toBe(403);
+
+    // 3. Admin can publish via PATCH /api/db/products/:id/status -> succeeds 200
+    const adminPatchRes = await request(app)
+      .patch(`/api/db/products/${staffProdId}/status`)
+      .set('Authorization', `Bearer ${validAdminToken}`)
+      .send({ status: 'published' });
+    expect(adminPatchRes.status).toBe(200);
+    expect(adminPatchRes.body.status).toBe('published');
+
+    // 4. Clean up test product
+    const cleanupRes = await request(app)
+      .delete(`/api/db/products/${staffProdId}`)
+      .set('Authorization', `Bearer ${validAdminToken}`);
+    expect(cleanupRes.status).toBe(200);
+  });
 });

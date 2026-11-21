@@ -282,7 +282,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>جاري المعالجة عبر Firebase...</span>
+                  <span>جاري معالجة الدخول...</span>
                 </>
               ) : mode === 'login' ? (
                 <>
@@ -345,7 +345,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="mt-4 pt-4 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-500">
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>مصادقة أصلية عبر Firebase Auth</span>
+              <span>تسجيل دخول آمن وموثوق</span>
             </span>
             <button
               type="button"

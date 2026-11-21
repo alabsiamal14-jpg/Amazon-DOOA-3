@@ -246,6 +246,14 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
         unsubSubmissions = loadSubmissions();
         unsubDrafts = loadDrafts();
       } else {
+        if (unsubSubmissions) {
+          unsubSubmissions();
+          unsubSubmissions = undefined;
+        }
+        if (unsubDrafts) {
+          unsubDrafts();
+          unsubDrafts = undefined;
+        }
         // Fallback defaults for unauthenticated preview
         const defaults: SupplierItem[] = [
           { id: 'sup-001', name: 'التاجر أحمد للمستحضرات (الرياض)', whatsappPhone: '966501234567', code: 'SUP-0001' },
@@ -279,7 +287,8 @@ export const AISupplierIntelligenceCenter: React.FC = () => {
           setDrafts(list);
         },
         (err) => {
-          console.warn('[AISupplier] Drafts listener error:', err.message);
+          console.error('[AISupplier] Drafts listener error:', err.message);
+          showToast('تعذر مزامنة مسودات الموردين لحظياً: ' + err.message, 'error');
         }
       );
       return unsub;

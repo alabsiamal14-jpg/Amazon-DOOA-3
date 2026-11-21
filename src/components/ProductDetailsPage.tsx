@@ -453,24 +453,35 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             
             {/* Price Box */}
             <div>
-              <span className="text-[11px] font-bold text-stone-400 block mb-1">السعر الإجمالي:</span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-rose-600">
-                  {currentPrice} {settings.currency}
-                </span>
-                {hasDiscount && (
-                  <span className="text-sm text-stone-400 line-through">
-                    {product.original_price} {settings.currency}
-                  </span>
-                )}
-              </div>
+              {currentPrice > 0 ? (
+                <>
+                  <span className="text-[11px] font-bold text-stone-400 block mb-1">السعر الإجمالي:</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-rose-600">
+                      {currentPrice} {settings.currency}
+                    </span>
+                    {hasDiscount && (
+                      <span className="text-sm text-stone-400 line-through">
+                        {product.original_price} {settings.currency}
+                      </span>
+                    )}
+                  </div>
 
-              {hasDiscount && (
-                <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg mt-1 inline-block">
-                  وفرتِ: {discountAmount} {settings.currency} ({discountPercent}%)
+                  {hasDiscount && (
+                    <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg mt-1 inline-block">
+                      وفرتِ: {discountAmount} {settings.currency} ({discountPercent}%)
+                    </div>
+                  )}
+                  <span className="text-[10px] text-stone-400 block mt-1">الأسعار شاملة ضريبة القيمة المضافة</span>
+                </>
+              ) : (
+                <div className="py-1">
+                  <span className="text-[11px] font-bold text-stone-400 block mb-1">التسعير:</span>
+                  <span className="text-lg font-black text-stone-800 block">
+                    السعر حسب الطلب عبر واتساب
+                  </span>
                 </div>
               )}
-              <span className="text-[10px] text-stone-400 block mt-1">الأسعار شاملة ضريبة القيمة المضافة</span>
             </div>
 
             {/* Stock Availability */}
@@ -534,7 +545,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 className="w-full bg-stone-900 hover:bg-stone-800 disabled:bg-stone-200 text-white py-3.5 px-4 rounded-2xl font-bold text-sm shadow-md hover:shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <ShoppingBag className="w-4 h-4 text-rose-300" />
-                <span>أضف إلى سلة المشتريات ({currentPrice * quantity} {settings.currency})</span>
+                <span>
+                  {currentPrice > 0
+                    ? `أضف إلى سلة المشتريات (${currentPrice * quantity} ${settings.currency})`
+                    : 'أضف إلى سلة المشتريات'}
+                </span>
               </button>
 
               <button

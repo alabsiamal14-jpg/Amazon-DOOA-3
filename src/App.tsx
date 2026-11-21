@@ -53,11 +53,12 @@ import {
 import { AuthModal } from './components/AuthModal';
 import { PublicAddProductModal } from './components/PublicAddProductModal';
 import { OfflineStatusIndicator } from './components/OfflineStatusIndicator';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { StaffDashboard } from './components/StaffDashboard';
 import { DriverPortal } from './components/DriverPortal';
 import { AdminSalesChart } from './components/AdminSalesChart';
 import { UserProfile } from './types';
-import { Sparkles, MessageCircle, Heart, ShieldCheck, CheckCircle2, Bot, Code2, Loader2, Percent, AlertCircle, Lock, Code, Truck } from 'lucide-react';
+import { Sparkles, MessageCircle, Heart, ShieldCheck, CheckCircle2, Bot, Code2, Loader2, Percent, AlertCircle, Lock, Code, Truck, Layers } from 'lucide-react';
 import { getProductPricing, verifyOrderItemsAgainstCatalog } from './lib/pricing';
 
 // Consolidated Lazy Imports with Resilient Suspense & Production Chunk Handlers
@@ -79,6 +80,11 @@ import {
   PricingAIDashboard,
   AISupplierIntelligenceCenter,
   BranchStoreLocator,
+  SmartEmployeeAssistantPage,
+  EmployeeDraftsReviewPanel,
+  AdminBulkImportPanel,
+  AdminSmartAssistantPage,
+  AdminEngineeringArchitectPage,
 } from './lib/lazyImports';
 
 // Loading Fallback Component
@@ -98,7 +104,10 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>(getStoredCart);
   const [wishlist, setWishlist] = useState<string[]>(getStoredWishlist);
   const [adminUser, setAdminUser] = useState<AdminUser | null>(getAdminSession);
-  const [adminSubTab, setAdminSubTab] = useState<'center' | 'products' | 'whatsapp-supplier' | 'pricing-ai' | 'settings'>('center');
+  const [adminSubTab, setAdminSubTab] = useState<'center' | 'products' | 'bulk-import' | 'smart-assistant' | 'employee-drafts' | 'whatsapp-supplier' | 'pricing-ai' | 'settings' | 'engineering-architect'>('center');
+  const [pendingEmployeeDraftsCount, setPendingEmployeeDraftsCount] = useState<number>(0);
+  const [pendingBulkImportCount, setPendingBulkImportCount] = useState<number>(0);
+  const [pendingSmartAssistantCount, setPendingSmartAssistantCount] = useState<number>(0);
   const [isAdminSupplierMode, setIsAdminSupplierMode] = useState(false);
   const [isAdminPricingMode, setIsAdminPricingMode] = useState(false);
 
@@ -130,10 +139,15 @@ export default function App() {
   // References for Real-Time Cart Listener and Guest Cart Merging
   const cartUnsubscribeRef = useRef<(() => void) | null>(null);
   const guestCartRef = useRef<CartItem[]>(cart);
+  const productsRef = useRef<Product[]>(products);
 
   useEffect(() => {
     guestCartRef.current = cart;
   }, [cart]);
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
 
   // Server-side verification of admin session and HMAC token on mount
   useEffect(() => {
@@ -161,7 +175,83 @@ export default function App() {
     verifyAdmin();
   }, []);
 
-  const [activeTab, setActiveTab] = useState<'store' | 'product-detail' | 'checkout' | 'orders' | 'admin' | 'dev-advisor' | 'track-order' | 'branches' | 'driver'>('store');
+  const getInitialActiveTab = (): 'store' | 'product-detail' | 'checkout' | 'orders' | 'admin' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant' => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('page') === 'employee-assistant' || window.location.hash === '#employee-assistant') {
+        return 'employee-assistant';
+      }
+    }
+    return 'store';
+  };
+
+  const [activeTab, setActiveTab] = useState<'store' | 'product-detail' | 'checkout' | 'orders' | 'admin' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant'>(getInitialActiveTab);
+
+  // Refresh Pending Employee Drafts count when admin is authenticated
+  const refreshPendingEmployeeDraftsCount = async () => {
+    if (!adminUser) return;
+    try {
+      const headers = await getAuthHeadersAsync();
+      if (!headers.Authorization) return;
+      const res = await fetch('/api/employee-assistant/drafts/count', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingEmployeeDraftsCount(Number(data.pendingCount || 0));
+      }
+    } catch {
+      // Ignore transient failure
+    }
+  };
+
+  const refreshPendingBulkImportCount = async () => {
+    if (!adminUser) return;
+    try {
+      const headers = await getAuthHeadersAsync();
+      if (!headers.Authorization) return;
+      const res = await fetch('/api/admin/bulk-import/drafts?status=pending_review', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingBulkImportCount(Number(data.pendingCount ?? (Array.isArray(data.drafts) ? data.drafts.length : 0)));
+      }
+    } catch {
+      // Ignore transient failure
+    }
+  };
+
+  const refreshPendingSmartAssistantCount = async () => {
+    if (!adminUser) return;
+    try {
+      const headers = await getAuthHeadersAsync();
+      if (!headers.Authorization) return;
+      const res = await fetch('/api/admin/smart-assistant/drafts?status=pending_review', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingSmartAssistantCount(Number(data.pendingCount ?? (Array.isArray(data.drafts) ? data.drafts.length : 0)));
+      }
+    } catch {
+      // Ignore transient failure
+    }
+  };
+
+  useEffect(() => {
+    if (adminUser) {
+      refreshPendingEmployeeDraftsCount();
+      refreshPendingBulkImportCount();
+      refreshPendingSmartAssistantCount();
+    }
+  }, [adminUser]);
+
+  // Keep standalone URL hash in sync when opening or closing the independent assistant page
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (activeTab === 'employee-assistant') {
+      if (window.location.hash !== '#employee-assistant') {
+        window.history.replaceState(null, '', '#employee-assistant');
+      }
+    } else if (window.location.hash === '#employee-assistant') {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [activeTab]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -179,11 +269,16 @@ export default function App() {
 
   // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setToast({ message, type });
-    setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setToast(null);
+      toastTimerRef.current = null;
     }, 3500);
   };
 
@@ -257,7 +352,7 @@ export default function App() {
     };
 
     async function loadData() {
-      const serverPromise: Promise<Product[]> = fetch('/api/db/products?fresh=1', {
+      const serverProducts: Product[] = await fetch('/api/db/products', {
         cache: 'no-store',
       })
         .then(async (res) => {
@@ -275,30 +370,34 @@ export default function App() {
           return [];
         });
 
-      const fsPromise = fetchProductsFirestore();
-
-      const [fsOutcome, serverOutcome] = await Promise.allSettled([fsPromise, serverPromise]);
       if (cancelled) return;
 
-      const fsProducts =
-        fsOutcome.status === 'fulfilled' && fsOutcome.value?.isFirebase
-          ? fsOutcome.value.products
-          : [];
-      const serverProducts = serverOutcome.status === 'fulfilled' ? serverOutcome.value : [];
-      const localFallback =
-        fsOutcome.status === 'fulfilled' ? fsOutcome.value.products : getStoredProducts();
+      // Only query Firestore directly from the client if the server catalog returned empty
+      if (serverProducts.length > 0) {
+        saveStoredProducts(mergeAndSortCatalog(serverProducts, getStoredProducts()));
+        return;
+      }
 
-      const primary = fsProducts.length > 0 ? fsProducts : serverProducts;
-      const secondary = fsProducts.length > 0 ? serverProducts : localFallback;
-      const merged = mergeAndSortCatalog(primary, secondary);
+      const fsOutcome = await fetchProductsFirestore();
+      if (cancelled) return;
+
+      const fsProducts = fsOutcome.isFirebase ? fsOutcome.products : [];
+      const merged = mergeAndSortCatalog(fsProducts, fsOutcome.products || getStoredProducts());
 
       if (merged.length > 0) {
         saveStoredProducts(merged);
         setProducts(merged);
+        if (!fsOutcome.isFirebase && fsOutcome.error) {
+          console.warn('[App] Firestore catalog fallback active:', fsOutcome.error);
+          showToast(`تعذر الاتصال بقاعدة المنتجات السحابية: ${fsOutcome.error}`, 'error');
+        }
       } else {
         const pResult = await fetchProductsCloud();
         if (!cancelled) {
           setProducts(pResult.products);
+          if (fsOutcome.error) {
+            showToast(`تعذر تحميل المنتجات من السحابة: ${fsOutcome.error}`, 'error');
+          }
         }
       }
     }
@@ -311,16 +410,29 @@ export default function App() {
 
   // Listen to Firebase Authentication State & Real-Time Cart Listener Lifecycle
   useEffect(() => {
+    let isMounted = true;
+    let activeAuthUid: string | null = null;
+    const cleanupCartListener = () => {
+      if (cartUnsubscribeRef.current) {
+        cartUnsubscribeRef.current();
+        cartUnsubscribeRef.current = null;
+      }
+    };
+
     const unsubscribeAuth = subscribeToAuthState(async (fbUser, profile) => {
+      if (!isMounted) return;
+
       if (!fbUser || !profile) {
         // Safe Cleanup: User logged out -> terminate old cart listener immediately
-        if (cartUnsubscribeRef.current) {
-          cartUnsubscribeRef.current();
-          cartUnsubscribeRef.current = null;
-        }
+        activeAuthUid = null;
+        cleanupCartListener();
         setCurrentUser(null);
         return;
       }
+
+      const currentUid = fbUser.uid;
+      activeAuthUid = currentUid;
+      const isActiveSession = () => isMounted && activeAuthUid === currentUid;
 
       // User logged in:
       setCurrentUser(profile);
@@ -329,12 +441,20 @@ export default function App() {
       try {
         const canViewAllOrders = profile.role === 'admin' || profile.role === 'driver' || profile.role === 'staff';
         const oResult = await fetchOrdersFirestore(profile.uid, canViewAllOrders);
+        if (!isActiveSession()) return;
         if (oResult.orders && oResult.orders.length > 0) {
           setOrders(oResult.orders);
         }
-      } catch (err) {
-        console.warn('Error fetching orders for user:', err);
+        if (!oResult.isFirebase && oResult.error) {
+          showToast(`تعذر مزامنة الطلبات من السحابة: ${oResult.error}`, 'error');
+        }
+      } catch (err: any) {
+        if (!isActiveSession()) return;
+        console.error('Error fetching orders for user:', err);
+        showToast(err?.message || 'تعذر تحميل الطلبات من السحابة.', 'error');
       }
+
+      if (!isActiveSession()) return;
 
       if (profile.role === 'admin') {
         const adminSession: AdminUser = {
@@ -356,28 +476,41 @@ export default function App() {
       }
 
       // Clean up previous listener to prevent duplicate listeners or race conditions
-      if (cartUnsubscribeRef.current) {
-        cartUnsubscribeRef.current();
-        cartUnsubscribeRef.current = null;
-      }
+      cleanupCartListener();
 
       // Safe Merge on Login: Transfer guest items to Firestore without loss or duplication
       const currentGuestItems = guestCartRef.current;
+      const latestProducts = productsRef.current;
       if (currentGuestItems && currentGuestItems.length > 0) {
         try {
-          await mergeCartOnLogin(profile.uid, currentGuestItems, products);
-        } catch (e) {
-          console.warn('[Cart Merge] Error merging guest items on login:', e);
+          await mergeCartOnLogin(profile.uid, currentGuestItems, latestProducts);
+        } catch (e: any) {
+          console.error('[Cart Merge] Error merging guest items on login:', e);
+          if (isActiveSession()) {
+            showToast(e?.message || 'تعذر دمج سلة الزائر مع السحابة، قد تظهر العناصر المحفوظة محلياً.', 'error');
+          }
         }
       }
+
+      if (!isActiveSession()) return;
+
+      // Double-check cleanup after async merge before attaching real-time listener
+      cleanupCartListener();
 
       // Start Real-Time Firestore onSnapshot Cart Listener across devices
       const unsubscribeCart = subscribeToCartFirestore(
         profile.uid,
-        products,
+        productsRef.current,
         (serverCartItems) => {
+          if (!isActiveSession()) return;
           setCart(serverCartItems);
           saveStoredCart(serverCartItems);
+        },
+        (err) => {
+          console.error('[App] Real-time cart sync error:', err);
+          if (isActiveSession()) {
+            showToast('تعذر مزامنة السلة لحظياً مع السحابة.', 'error');
+          }
         }
       );
       cartUnsubscribeRef.current = unsubscribeCart;
@@ -385,22 +518,22 @@ export default function App() {
       // Sync Wishlist from Firestore
       try {
         const fsFavs = await fetchWishlistFirestore(profile.uid);
+        if (!isActiveSession()) return;
         if (fsFavs && fsFavs.length > 0) {
           setWishlist((prev) => Array.from(new Set([...prev, ...fsFavs])));
         }
-      } catch (e) {
-        console.warn('Error loading wishlist from Firestore:', e);
+      } catch (e: any) {
+        console.error('Error loading wishlist from Firestore:', e);
       }
     });
 
     return () => {
+      isMounted = false;
+      activeAuthUid = null;
       unsubscribeAuth();
-      if (cartUnsubscribeRef.current) {
-        cartUnsubscribeRef.current();
-        cartUnsubscribeRef.current = null;
-      }
+      cleanupCartListener();
     };
-  }, [products]);
+  }, []);
 
   // Sync settings and wishlist locally
   useEffect(() => {
@@ -413,22 +546,31 @@ export default function App() {
 
   // Wishlist Handlers
   const handleToggleWishlist = (product: Product) => {
-    setWishlist((prev) => {
-      const exists = prev.includes(product.id);
-      if (exists) {
-        showToast(`تمت إزالة "${product.title_ar}" من المفضلة`, 'info');
-        if (currentUser?.uid) {
-          removeWishlistFirestore(currentUser.uid, product.id);
-        }
-        return prev.filter((id) => id !== product.id);
-      } else {
-        showToast(`تمت إضافة "${product.title_ar}" للمفضلة ❤️`, 'success');
-        if (currentUser?.uid) {
-          addWishlistFirestore(currentUser.uid, product);
-        }
-        return [...prev, product.id];
+    const exists = wishlist.includes(product.id);
+    const nextWishlist = exists
+      ? wishlist.filter((id) => id !== product.id)
+      : [...wishlist, product.id];
+    setWishlist(nextWishlist);
+
+    if (exists) {
+      showToast(`تمت إزالة "${product.title_ar}" من المفضلة`, 'info');
+      if (currentUser?.uid) {
+        removeWishlistFirestore(currentUser.uid, product.id).catch((err) => {
+          console.error('Failed to remove wishlist item in Firestore:', err);
+          setWishlist((prev) => (prev.includes(product.id) ? prev : [...prev, product.id]));
+          showToast(err?.message || 'تعذر مزامنة المفضلة مع السحابة.', 'error');
+        });
       }
-    });
+    } else {
+      showToast(`تمت إضافة "${product.title_ar}" للمفضلة ❤️`, 'success');
+      if (currentUser?.uid) {
+        addWishlistFirestore(currentUser.uid, product).catch((err) => {
+          console.error('Failed to add wishlist item in Firestore:', err);
+          setWishlist((prev) => prev.filter((id) => id !== product.id));
+          showToast(err?.message || 'تعذر مزامنة المفضلة مع السحابة.', 'error');
+        });
+      }
+    }
   };
 
   const handleClearWishlist = () => {
@@ -444,9 +586,14 @@ export default function App() {
     if (selectedProduct && selectedProduct.id === updatedProduct.id) {
       setSelectedProduct(updatedProduct);
     }
-    await saveProductCloud(updatedProduct);
-    await saveProductFirestore(updatedProduct);
-    showToast('تم نشر التقييم وحساب المتوسط بنجاح! ⭐');
+    try {
+      await saveProductCloud(updatedProduct);
+      await saveProductFirestore(updatedProduct);
+      showToast('تم نشر التقييم وحساب المتوسط بنجاح! ⭐');
+    } catch (err: any) {
+      console.error('Failed to sync updated product:', err);
+      showToast(err?.message || 'تم تحديث التقييم محلياً، لكن تعذرت المزامنة مع السحابة.', 'error');
+    }
   };
 
   // Open Full Product Details Page
@@ -458,71 +605,77 @@ export default function App() {
 
   // Cart Handlers
   const handleAddToCart = (product: Product, quantity: number = 1) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
-      const newQty = existing ? existing.quantity + quantity : quantity;
-      const updated = existing
-        ? prev.map((item) => (item.product.id === product.id ? { ...item, quantity: newQty } : item))
-        : [...prev, { product, quantity }];
+    const existing = cart.find((item) => item.product.id === product.id);
+    const newQty = existing ? existing.quantity + quantity : quantity;
+    const updated = existing
+      ? cart.map((item) => (item.product.id === product.id ? { ...item, quantity: newQty } : item))
+      : [...cart, { product, quantity }];
 
-      if (currentUser?.uid) {
-        saveCartItemFirestore(currentUser.uid, { product, quantity: newQty });
-      } else {
-        saveStoredCart(updated);
-      }
-      return updated;
-    });
+    setCart(updated);
+    saveStoredCart(updated);
     showToast(`تمت إضافة "${product.title_ar}" (${quantity}) إلى السلة`);
+
+    if (currentUser?.uid) {
+      saveCartItemFirestore(currentUser.uid, { product, quantity: newQty }).catch((err) => {
+        console.error('Failed to sync cart item to Firestore:', err);
+        showToast(err?.message || 'تمت الإضافة محلياً، لكن تعذر مزامنة السلة مع السحابة.', 'error');
+      });
+    }
   };
 
   const handleUpdateQuantity = (productId: string, delta: number) => {
-    setCart((prev) => {
-      const target = prev.find((item) => item.product.id === productId);
-      if (!target) return prev;
-      const newQty = target.quantity + delta;
-      const updated = prev
-        .map((item) => {
-          if (item.product.id === productId) {
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
-          }
-          return item;
-        })
-        .filter(Boolean) as CartItem[];
-
-      if (currentUser?.uid) {
-        if (newQty > 0) {
-          saveCartItemFirestore(currentUser.uid, { product: target.product, quantity: newQty });
-        } else {
-          removeCartItemFirestore(currentUser.uid, productId);
+    const target = cart.find((item) => item.product.id === productId);
+    if (!target) return;
+    const newQty = target.quantity + delta;
+    const updated = cart
+      .map((item) => {
+        if (item.product.id === productId) {
+          return newQty > 0 ? { ...item, quantity: newQty } : null;
         }
-      } else {
-        saveStoredCart(updated);
-      }
-      return updated;
-    });
+        return item;
+      })
+      .filter(Boolean) as CartItem[];
+
+    setCart(updated);
+    saveStoredCart(updated);
+
+    if (currentUser?.uid) {
+      const op =
+        newQty > 0
+          ? saveCartItemFirestore(currentUser.uid, { product: target.product, quantity: newQty })
+          : removeCartItemFirestore(currentUser.uid, productId);
+      op.catch((err) => {
+        console.error('Failed to sync cart quantity update to Firestore:', err);
+        showToast(err?.message || 'تعذر مزامنة تحديث الكمية مع السحابة.', 'error');
+      });
+    }
   };
 
   const handleRemoveItem = (productId: string) => {
-    setCart((prev) => {
-      const updated = prev.filter((item) => item.product.id !== productId);
-      if (currentUser?.uid) {
-        removeCartItemFirestore(currentUser.uid, productId);
-      } else {
-        saveStoredCart(updated);
-      }
-      return updated;
-    });
+    const updated = cart.filter((item) => item.product.id !== productId);
+    setCart(updated);
+    saveStoredCart(updated);
     showToast('تمت إزالة المنتج من السلة', 'info');
+
+    if (currentUser?.uid) {
+      removeCartItemFirestore(currentUser.uid, productId).catch((err) => {
+        console.error('Failed to remove cart item in Firestore:', err);
+        showToast(err?.message || 'تعذر مزامنة حذف المنتج من السلة السحابية.', 'error');
+      });
+    }
   };
 
   const handleClearCart = () => {
     setCart([]);
-    if (currentUser?.uid) {
-      clearCartFirestore(currentUser.uid);
-    } else {
-      saveStoredCart([]);
-    }
+    saveStoredCart([]);
     showToast('تم إفراغ السلة بالكامل', 'info');
+
+    if (currentUser?.uid) {
+      clearCartFirestore(currentUser.uid).catch((err) => {
+        console.error('Failed to clear cart in Firestore:', err);
+        showToast(err?.message || 'تعذر تحديث السلة السحابية حالياً.', 'error');
+      });
+    }
   };
 
   // When order is placed from CartDrawer or CheckoutPage
@@ -561,11 +714,17 @@ export default function App() {
       }
 
       const confirmedOrder: Order = data.order;
+      let firestoreMirrorWarning = '';
 
-      if (data.syncStatus !== 'synced' && currentUser?.uid) {
-        createOrderFirestore(confirmedOrder, currentUser.uid).catch((syncErr) => {
-          console.warn('Client Firestore order mirror notice:', syncErr);
-        });
+      if (data.syncStatus === 'failed') {
+        firestoreMirrorWarning = 'تم تسجيل الطلب بالخادم، لكن تعذرت مزامنته مع السحابة.';
+      } else if (data.syncStatus !== 'synced' && currentUser?.uid) {
+        try {
+          await createOrderFirestore(confirmedOrder, currentUser.uid);
+        } catch (syncErr: any) {
+          console.error('Client Firestore order mirror error:', syncErr);
+          firestoreMirrorWarning = syncErr?.message || 'تعذر مزامنة الطلب مع حسابك حالياً.';
+        }
       }
 
       // Update state with confirmed order
@@ -587,13 +746,21 @@ export default function App() {
 
       // Clear Cart only after server confirmation
       setCart([]);
+      saveStoredCart([]);
       if (currentUser?.uid) {
-        clearCartFirestore(currentUser.uid);
-      } else {
-        saveStoredCart([]);
+        clearCartFirestore(currentUser.uid).catch((err) => {
+          console.warn('Cart clear sync notice:', err);
+        });
       }
 
-      showToast(`تم تسجيل وتأكيد طلبكِ بنجاح #${confirmedOrder.order_number}`, 'success');
+      if (firestoreMirrorWarning) {
+        showToast(
+          `تم تسجيل الطلب #${confirmedOrder.order_number}، لكن: ${firestoreMirrorWarning}`,
+          'error'
+        );
+      } else {
+        showToast(`تم تسجيل وتأكيد طلبكِ بنجاح #${confirmedOrder.order_number}`, 'success');
+      }
       return confirmedOrder;
     } catch (err: any) {
       const msg = err.message || 'حدث خطأ أثناء معالجة الطلب.';
@@ -762,38 +929,34 @@ export default function App() {
   };
 
   const handleUpdateStock = async (productId: string, newStock: number) => {
-    const authHeaders = await getAuthHeadersAsync();
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const updated = { ...p, stock_quantity: newStock };
-          saveProductCloud(updated);
-          saveProductFirestore(updated);
-          fetch('/api/db/products', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders },
-            body: JSON.stringify(updated),
-          }).catch(() => {});
-          return updated;
-        }
-        return p;
-      })
-    );
+    const previous = products.find((p) => p.id === productId);
+    if (!previous) return;
+    const updated = { ...previous, stock_quantity: newStock };
+
+    setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
+    try {
+      await persistSingleProduct(updated);
+    } catch (err: any) {
+      setProducts((prev) => prev.map((p) => (p.id === productId ? previous : p)));
+      upsertStoredProduct(previous);
+      showToast(err?.message || 'تعذر تحديث المخزون في قاعدة البيانات.', 'error');
+    }
   };
 
   const handleToggleFeatured = async (productId: string) => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const updated = { ...p, featured: !p.featured };
-          saveProductCloud(updated);
-          saveProductFirestore(updated);
-          return updated;
-        }
-        return p;
-      })
-    );
-    showToast('تم تحديث حالة تمييز المنتج', 'info');
+    const previous = products.find((p) => p.id === productId);
+    if (!previous) return;
+    const updated = { ...previous, featured: !previous.featured };
+
+    setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
+    try {
+      await persistSingleProduct(updated);
+      showToast('تم تحديث حالة تمييز المنتج', 'info');
+    } catch (err: any) {
+      setProducts((prev) => prev.map((p) => (p.id === productId ? previous : p)));
+      upsertStoredProduct(previous);
+      showToast(err?.message || 'تعذر تحديث تمييز المنتج في قاعدة البيانات.', 'error');
+    }
   };
 
   // Direct Price & Discount Update Handlers for Store Admin (Awaits database, prevents false success)
@@ -821,6 +984,7 @@ export default function App() {
     setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
 
     // 3. Synchronize price within customer cart to prevent stale pricing display
+    const itemsToSync: CartItem[] = [];
     setCart((prevCart) => {
       const hasItem = prevCart.some((item) => item.product.id === productId);
       if (!hasItem) return prevCart;
@@ -830,9 +994,7 @@ export default function App() {
             ...item,
             product: updated,
           };
-          if (currentUser?.uid) {
-            saveCartItemFirestore(currentUser.uid, updatedItem);
-          }
+          itemsToSync.push(updatedItem);
           return updatedItem;
         }
         return item;
@@ -840,6 +1002,11 @@ export default function App() {
       saveStoredCart(updatedCart);
       return updatedCart;
     });
+    if (currentUser?.uid && itemsToSync.length > 0) {
+      Promise.all(itemsToSync.map((it) => saveCartItemFirestore(currentUser.uid, it))).catch((err) => {
+        console.warn('Cart price sync notice:', err);
+      });
+    }
 
     const discText = discountPrice ? ` وسعر العرض (${discountPrice} ${settings.currency})` : '';
     showToast(`تم حفظ وتحديث سعر المنتج للزبائن فورياً${discText}!`, 'success');
@@ -878,6 +1045,7 @@ export default function App() {
     setProducts(newProductsState);
 
     // 3. Sync cart with bulk update
+    const itemsToSync: CartItem[] = [];
     setCart((prevCart) => {
       const updatedCart = prevCart.map((item) => {
         const found = updatedProducts.find((u) => u.id === item.product.id);
@@ -886,9 +1054,7 @@ export default function App() {
             ...item,
             product: found,
           };
-          if (currentUser?.uid) {
-            saveCartItemFirestore(currentUser.uid, updatedItem);
-          }
+          itemsToSync.push(updatedItem);
           return updatedItem;
         }
         return item;
@@ -896,6 +1062,11 @@ export default function App() {
       saveStoredCart(updatedCart);
       return updatedCart;
     });
+    if (currentUser?.uid && itemsToSync.length > 0) {
+      Promise.all(itemsToSync.map((it) => saveCartItemFirestore(currentUser.uid, it))).catch((err) => {
+        console.warn('Bulk cart price sync notice:', err);
+      });
+    }
 
     if (discountPercent !== null) {
       showToast(`تم تطبيق خصم ${discountPercent}% على ${productIds.length} منتجات بنجاح!`, 'success');
@@ -963,10 +1134,40 @@ export default function App() {
 
   // Order Admin Handlers
   const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
-    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status } : o)));
-    await updateOrderStatusCloud(orderId, status);
-    await updateOrderStatusFirestore(orderId, status);
-    showToast('تم تحديث حالة الطلب بنجاح');
+    const previousOrders = orders;
+    const targetOrder = orders.find((o) => o.id === orderId || o.order_number === orderId);
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId || o.order_number === orderId ? { ...o, status } : o))
+    );
+    try {
+      await updateOrderStatusCloud(orderId, status);
+      let serverOk = false;
+      if (targetOrder?.order_number) {
+        const authHeaders = await getAuthHeadersAsync();
+        if (authHeaders.Authorization) {
+          const res = await fetch(
+            `/api/db/orders/${encodeURIComponent(targetOrder.order_number)}/status`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', ...authHeaders },
+              body: JSON.stringify({ status }),
+            }
+          );
+          if (res.ok) serverOk = true;
+        }
+      }
+      try {
+        await updateOrderStatusFirestore(orderId, status);
+      } catch (fsErr: any) {
+        if (!serverOk) throw fsErr;
+        console.warn('Firestore status mirror notice:', fsErr);
+      }
+      showToast('تم تحديث حالة الطلب بنجاح');
+    } catch (err: any) {
+      setOrders(previousOrders);
+      console.error('Update order status error:', err);
+      showToast(err?.message || 'تعذر تحديث حالة الطلب، يرجى المحاولة مرة أخرى.', 'error');
+    }
   };
 
   const handleAssignDriver = async (
@@ -974,6 +1175,7 @@ export default function App() {
     orderNumber: string,
     driver: { driverName: string; driverPhone: string }
   ) => {
+    const previousOrders = orders;
     try {
       // 1. Optimistic local update
       setOrders((prev) =>
@@ -990,8 +1192,9 @@ export default function App() {
       );
 
       // 2. Sync to Cloud SQL backend
+      let backendOk = false;
       try {
-        await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/driver`, {
+        const res = await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/driver`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
           body: JSON.stringify({
@@ -999,20 +1202,27 @@ export default function App() {
             driver_phone: driver.driverPhone,
           }),
         });
+        backendOk = res.ok;
       } catch (e) {
         console.warn('Backend driver assignment sync warning:', e);
       }
 
       // 3. Sync to Firestore
-      await updateOrderDriverFirestore(orderId, {
-        driver_name: driver.driverName,
-        driver_phone: driver.driverPhone,
-      });
+      try {
+        await updateOrderDriverFirestore(orderId, {
+          driver_name: driver.driverName,
+          driver_phone: driver.driverPhone,
+        });
+      } catch (fsErr) {
+        if (!backendOk) throw fsErr;
+        console.warn('Firestore driver sync notice:', fsErr);
+      }
 
       showToast(`تم تعيين الكابتن (${driver.driverName}) للطلب ${orderNumber} بنجاح 🛵`, 'success');
     } catch (err: any) {
+      setOrders(previousOrders);
       console.error('Assign driver error:', err);
-      showToast('تعذر تعيين المندوب، يرجى المحاولة مرة أخرى', 'error');
+      showToast(err?.message || 'تعذر تعيين المندوب، يرجى المحاولة مرة أخرى', 'error');
     }
   };
 
@@ -1028,6 +1238,7 @@ export default function App() {
       driver_phone?: string;
     }
   ) => {
+    const previousOrders = orders;
     try {
       // 1. Optimistic state update
       setOrders((prev) =>
@@ -1049,8 +1260,9 @@ export default function App() {
       );
 
       // 2. Sync to Cloud SQL backend
+      let backendOk = false;
       try {
-        await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/delivery`, {
+        const res = await fetch(`/api/db/orders/${encodeURIComponent(orderNumber)}/delivery`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...(await getAuthHeadersAsync()) },
           body: JSON.stringify({
@@ -1058,12 +1270,18 @@ export default function App() {
             ...extraData,
           }),
         });
+        backendOk = res.ok;
       } catch (e) {
         console.warn('Backend delivery status sync warning:', e);
       }
 
       // 3. Sync to Firestore
-      await updateOrderStatusFirestore(orderId, status, extraData);
+      try {
+        await updateOrderStatusFirestore(orderId, status, extraData);
+      } catch (fsErr) {
+        if (!backendOk) throw fsErr;
+        console.warn('Firestore delivery status sync notice:', fsErr);
+      }
 
       const statusLabels: Record<string, string> = {
         out_for_delivery: 'في الطريق للعميل 🛵',
@@ -1075,8 +1293,9 @@ export default function App() {
 
       showToast(`تم تحديث حالة الطلب إلى: ${statusLabels[status] || status}`, 'success');
     } catch (err: any) {
+      setOrders(previousOrders);
       console.error('Update delivery status error:', err);
-      showToast('تعذر تحديث حالة التوصيل، يرجى المحاولة مرة أخرى', 'error');
+      showToast(err?.message || 'تعذر تحديث حالة التوصيل، يرجى المحاولة مرة أخرى', 'error');
     }
   };
 
@@ -1197,6 +1416,25 @@ export default function App() {
         </div>
       )}
 
+      {/* Floating Smart Employee Assistant Icon at Top of Storefront & Admin Dashboard */}
+      {(activeTab === 'store' || activeTab === 'admin') && (
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('employee-assistant');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          aria-label="المساعد الذكي للموظفين"
+          className="fixed top-24 sm:top-28 left-3 sm:left-6 z-30 flex items-center gap-2 bg-stone-900/95 hover:bg-rose-600 text-white px-3.5 py-2.5 rounded-2xl shadow-xl border border-rose-400/40 backdrop-blur-md transition-all hover:scale-105 active:scale-95 cursor-pointer group"
+        >
+          <span className="w-7 h-7 rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 flex items-center justify-center shrink-0">
+            <Bot className="w-4 h-4 text-white" />
+          </span>
+          <span className="text-xs font-black hidden sm:inline">مساعد الموظفين الذكي</span>
+          <span className="text-[11px] font-black sm:hidden">المساعد</span>
+        </button>
+      )}
+
       {/* Main Navbar with Smart Search */}
       <Navbar
         activeTab={activeTab}
@@ -1225,7 +1463,27 @@ export default function App() {
 
       {/* Main Views Container */}
       <main className="flex-1">
-        <Suspense fallback={<ViewLoadingFallback />}>
+        <ErrorBoundary
+          key={activeTab}
+          fallbackTitle="تعذر عرض هذه الصفحة مؤقتاً"
+          onReset={() => setActiveTab('store')}
+        >
+          <Suspense fallback={<ViewLoadingFallback />}>
+          {/* Standalone Independent Smart Employee Assistant Page */}
+          {activeTab === 'employee-assistant' && (
+            <SmartEmployeeAssistantPage
+              settings={settings}
+              isAdminLoggedIn={Boolean(adminUser)}
+              onBackToStore={() => {
+                setActiveTab('store');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onDraftSaved={() => {
+                refreshPendingEmployeeDraftsCount();
+              }}
+            />
+          )}
+
           {/* Storefront View */}
           {activeTab === 'store' && (
           <StoreFront
@@ -1383,6 +1641,54 @@ export default function App() {
                     <span>لوحة إدارة المنتجات</span>
                   </button>
                   <button
+                    onClick={() => { setAdminSubTab('bulk-import'); setIsAdminSupplierMode(false); setIsAdminPricingMode(false); }}
+                    className={`text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                      adminSubTab === 'bulk-import'
+                        ? 'bg-rose-600 text-white shadow-md font-extrabold ring-2 ring-rose-400'
+                        : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4 text-rose-200" />
+                    <span>الاستيراد الذكي بالجملة</span>
+                    {pendingBulkImportCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-amber-400 text-stone-950 tabular-nums">
+                        {pendingBulkImportCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setAdminSubTab('smart-assistant'); setIsAdminSupplierMode(false); setIsAdminPricingMode(false); }}
+                    className={`text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                      adminSubTab === 'smart-assistant'
+                        ? 'bg-rose-600 text-white shadow-md font-extrabold ring-2 ring-rose-400'
+                        : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+                    }`}
+                  >
+                    <Bot className="w-4 h-4 text-rose-200" />
+                    <span>المساعد الذكي الشامل</span>
+                    {pendingSmartAssistantCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-amber-400 text-stone-950 tabular-nums">
+                        {pendingSmartAssistantCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setAdminSubTab('employee-drafts'); setIsAdminSupplierMode(false); setIsAdminPricingMode(false); }}
+                    className={`text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+                      adminSubTab === 'employee-drafts'
+                        ? 'bg-amber-500 text-stone-950 shadow-md font-black ring-2 ring-amber-300'
+                        : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/40'
+                    }`}
+                  >
+                    <Bot className="w-4 h-4" />
+                    <span>Pending Employee Drafts</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                      adminSubTab === 'employee-drafts' ? 'bg-stone-950 text-amber-300' : 'bg-amber-400 text-stone-950'
+                    }`}>
+                      {pendingEmployeeDraftsCount}
+                    </span>
+                  </button>
+                  <button
                     onClick={() => { setAdminSubTab('whatsapp-supplier'); setIsAdminSupplierMode(true); setIsAdminPricingMode(false); }}
                     className={`text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
                       adminSubTab === 'whatsapp-supplier'
@@ -1421,6 +1727,24 @@ export default function App() {
                     <span>المستشار البرمجي</span>
                   </button>
                   <button
+                    onClick={() => { setAdminSubTab('engineering-architect'); setIsAdminSupplierMode(false); setIsAdminPricingMode(false); }}
+                    className={`text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                      adminSubTab === 'engineering-architect'
+                        ? 'bg-emerald-600 text-white shadow-md font-extrabold ring-2 ring-emerald-400'
+                        : 'bg-white/10 hover:bg-white/20 text-emerald-200 border border-emerald-400/40'
+                    }`}
+                  >
+                    <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                    <span>المستشار الهندسي الذكي</span>
+                  </button>
+                  <button
+                    onClick={() => setIsDocsOpen(true)}
+                    className="bg-white/10 hover:bg-white/20 text-rose-200 border border-white/20 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Code className="w-4 h-4 text-rose-300" />
+                    <span>أكواد النشر والتكامل</span>
+                  </button>
+                  <button
                     onClick={() => setIsCopilotOpen(true)}
                     className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
                   >
@@ -1444,6 +1768,60 @@ export default function App() {
 
               {adminSubTab === 'center' ? (
                 <AISupplierIntelligenceCenter />
+              ) : adminSubTab === 'bulk-import' ? (
+                <AdminBulkImportPanel
+                  categories={INITIAL_CATEGORIES}
+                  settings={settings}
+                  onProductsPublished={(publishedList) => {
+                    if (publishedList.length > 0) {
+                      upsertStoredProducts(publishedList);
+                      setProducts((prev) => {
+                        const incomingById = new Map(publishedList.map((p) => [p.id, p]));
+                        const updatedExisting = prev.map((p) => incomingById.get(p.id) || p);
+                        const existingIds = new Set(prev.map((p) => p.id));
+                        const brandNew = publishedList.filter((p) => !existingIds.has(p.id));
+                        return [...brandNew, ...updatedExisting];
+                      });
+                      showToast(`تم اعتماد ونشر (${publishedList.length}) منتج بنجاح في المتجر!`, 'success');
+                    }
+                  }}
+                  onPendingCountChange={(count) => setPendingBulkImportCount(count)}
+                />
+              ) : adminSubTab === 'smart-assistant' ? (
+                <AdminSmartAssistantPage
+                  categories={INITIAL_CATEGORIES}
+                  settings={settings}
+                  onProductsPublished={(publishedList) => {
+                    if (publishedList.length > 0) {
+                      upsertStoredProducts(publishedList);
+                      setProducts((prev) => {
+                        const incomingById = new Map(publishedList.map((p) => [p.id, p]));
+                        const updatedExisting = prev.map((p) => incomingById.get(p.id) || p);
+                        const existingIds = new Set(prev.map((p) => p.id));
+                        const brandNew = publishedList.filter((p) => !existingIds.has(p.id));
+                        return [...brandNew, ...updatedExisting];
+                      });
+                      showToast(`تم اعتماد ونشر (${publishedList.length}) منتج بنجاح في المتجر!`, 'success');
+                    }
+                  }}
+                  onPendingCountChange={(count) => setPendingSmartAssistantCount(count)}
+                />
+              ) : adminSubTab === 'employee-drafts' ? (
+                <EmployeeDraftsReviewPanel
+                  categories={INITIAL_CATEGORIES}
+                  settings={settings}
+                  onDraftPublished={(publishedProduct) => {
+                    upsertStoredProduct(publishedProduct);
+                    setProducts((prev) => {
+                      const exists = prev.some((p) => p.id === publishedProduct.id);
+                      return exists
+                        ? prev.map((p) => (p.id === publishedProduct.id ? publishedProduct : p))
+                        : [publishedProduct, ...prev];
+                    });
+                    showToast(`تم تسعير ونشر "${publishedProduct.title_ar}" في المتجر!`, 'success');
+                  }}
+                  onPendingCountChange={(count) => setPendingEmployeeDraftsCount(count)}
+                />
               ) : adminSubTab === 'pricing-ai' ? (
                 <PricingAIDashboard />
               ) : adminSubTab === 'whatsapp-supplier' ? (
@@ -1454,6 +1832,11 @@ export default function App() {
                   onSaveSettings={handleSaveSettings}
                   onResetData={handleResetData}
                   onUpdateUserRole={handleUpdateUserRole}
+                />
+              ) : adminSubTab === 'engineering-architect' ? (
+                <AdminEngineeringArchitectPage
+                  settings={settings}
+                  onBackToProducts={() => setAdminSubTab('products')}
                 />
               ) : (
                 <>
@@ -1523,7 +1906,8 @@ export default function App() {
             allProducts={products}
           />
         )}
-        </Suspense>
+          </Suspense>
+        </ErrorBoundary>
       </main>
 
       {/* Cart Drawer Slide-Over */}
@@ -1569,8 +1953,8 @@ export default function App() {
           />
         )}
 
-        {/* Supabase & Bolt Code Modal */}
-        {isDocsOpen && <SupabaseCodeModal isOpen={isDocsOpen} onClose={() => setIsDocsOpen(false)} />}
+        {/* Supabase & Bolt Code Modal (Admin only) */}
+        {adminUser && isDocsOpen && <SupabaseCodeModal isOpen={isDocsOpen} onClose={() => setIsDocsOpen(false)} />}
 
         {/* AI Admin Copilot Modal */}
         {isCopilotOpen && (
@@ -1609,7 +1993,7 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-stone-900 text-stone-300 text-xs py-12 border-t border-stone-800 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8 pb-8 border-b border-stone-800">
+          <div className={`grid grid-cols-1 ${adminUser ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-8 mb-8 pb-8 border-b border-stone-800`}>
             {/* Col 1 */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 font-black text-white text-lg">
@@ -1653,37 +2037,39 @@ export default function App() {
               </div>
             </div>
 
-            {/* Col 4 */}
-            <div>
-              <h4 className="font-bold text-white mb-3 text-sm">تطوير وتكامل</h4>
-              <p className="text-stone-400 text-xs leading-relaxed mb-3">
-                مشروع مهيأ بالكامل للإنتاج مع Supabase و Next.js و Tailwind CSS و Gemini 3.8 Flash.
-              </p>
-              <button
-                onClick={() => setIsDocsOpen(true)}
-                className="bg-stone-800 hover:bg-stone-700 text-rose-300 px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-700 transition-colors mb-2 w-full text-right flex items-center gap-2 cursor-pointer"
-              >
-                <Code className="w-3.5 h-3.5" />
-                <span>عرض كود Supabase و Edge Function</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('driver');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-800/60 transition-colors mb-2 w-full text-right flex items-center gap-2 cursor-pointer"
-              >
-                <Truck className="w-3.5 h-3.5 text-amber-400" />
-                <span>بوابة مندوب التوصيل الميداني 🛵</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('admin')}
-                className="bg-stone-800 hover:bg-stone-700 text-white px-3.5 py-2 rounded-xl text-xs font-black border border-stone-700 transition-colors w-full text-right flex items-center gap-2 cursor-pointer"
-              >
-                <Lock className="w-3.5 h-3.5 text-rose-400" />
-                <span>بوابة الإدارة والموظفين</span>
-              </button>
-            </div>
+            {/* Col 4: Internal developer & integration tools (visible only to authenticated admins) */}
+            {adminUser && (
+              <div>
+                <h4 className="font-bold text-white mb-3 text-sm">تطوير وتكامل</h4>
+                <p className="text-stone-400 text-xs leading-relaxed mb-3">
+                  مشروع مهيأ بالكامل للإنتاج مع Supabase و Next.js و Tailwind CSS و Gemini 3.8 Flash.
+                </p>
+                <button
+                  onClick={() => setIsDocsOpen(true)}
+                  className="bg-stone-800 hover:bg-stone-700 text-rose-300 px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-700 transition-colors mb-2 w-full text-right flex items-center gap-2 cursor-pointer"
+                >
+                  <Code className="w-3.5 h-3.5" />
+                  <span>عرض كود Supabase و Edge Function</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('driver');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-800/60 transition-colors mb-2 w-full text-right flex items-center gap-2 cursor-pointer"
+                >
+                  <Truck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>بوابة مندوب التوصيل الميداني 🛵</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('admin')}
+                  className="bg-stone-800 hover:bg-stone-700 text-white px-3.5 py-2 rounded-xl text-xs font-black border border-stone-700 transition-colors w-full text-right flex items-center gap-2 cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5 text-rose-400" />
+                  <span>بوابة الإدارة والموظفين</span>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-stone-500 text-[11px]">

@@ -164,3 +164,44 @@ export const BranchStoreLocator = lazy(() =>
     }))
   )
 );
+
+export const SmartEmployeeAssistantPage = lazy(() =>
+  retryImport(() =>
+    import('../components/SmartEmployeeAssistantPage').then((m) => ({
+      default: m.SmartEmployeeAssistantPage || m.default,
+    }))
+  )
+);
+
+export const EmployeeDraftsReviewPanel = lazy(() =>
+  retryImport(() =>
+    import('../components/EmployeeDraftsReviewPanel').then((m) => ({
+      default: m.EmployeeDraftsReviewPanel || m.default,
+    }))
+  )
+);
+
+export const AdminBulkImportPanel = lazy(() =>
+  retryImport(() =>
+    import('../components/AdminBulkImportPanel').then((m) => ({
+      default: m.AdminBulkImportPanel || m.default,
+    }))
+  )
+);
+
+export const AdminSmartAssistantPage = lazy(() =>
+  retryImport(() =>
+    import('../components/AdminSmartAssistantPage').then((m) => ({
+      default: m.AdminSmartAssistantPage || m.default,
+    }))
+  )
+);
+
+export const AdminEngineeringArchitectPage = lazy(() =>
+  retryImport(() =>
+    import('../components/AdminEngineeringArchitectPage').then((m) => ({
+      default: m.AdminEngineeringArchitectPage || m.default,
+    }))
+  )
+);
+

@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, Lock, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, LogIn, ChevronDown, Flame, MapPin } from 'lucide-react';
+import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, Lock, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, LogIn, ChevronDown, Flame, MapPin, Bot } from 'lucide-react';
 import { StoreSettings, AdminUser, Product, UserProfile } from '../types';
 import { env } from '../lib/env';
 import { SmartSearchBar } from './SmartSearchBar';
 
 interface NavbarProps {
-  activeTab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver';
-  setActiveTab: (tab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver') => void;
+  activeTab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant';
+  setActiveTab: (tab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant') => void;
   cartCount: number;
   cartTotal: number;
   onOpenCart: () => void;
@@ -67,14 +67,23 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-stone-900 via-rose-950 to-stone-900 text-rose-100 text-xs py-2 px-4 text-center flex items-center justify-between font-medium">
         <div className="hidden sm:flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30 text-[10px]">
-            <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-            <span>سحابة Firebase متصلة (Auth & Firestore)</span>
-          </span>
-          {isCloud && (
-            <span className="flex items-center gap-1 text-emerald-300 bg-stone-800/60 px-2 py-0.5 rounded-full text-[10px]">
-              <Cloud className="w-3 h-3" />
-              Supabase
+          {adminUser ? (
+            <>
+              <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30 text-[10px]">
+                <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                <span>سحابة Firebase متصلة (Auth & Firestore)</span>
+              </span>
+              {isCloud && (
+                <span className="flex items-center gap-1 text-emerald-300 bg-stone-800/60 px-2 py-0.5 rounded-full text-[10px]">
+                  <Cloud className="w-3 h-3" />
+                  Supabase
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30 text-[10px]">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>توصيل سريع وآمن لكافة المدن</span>
             </span>
           )}
         </div>
@@ -148,15 +157,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Supabase Code & Export */}
-            <button
-              onClick={onOpenDocs}
-              title="كود Supabase و Edge Function جاهز للنسخ"
-              className="hidden xl:flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors border border-stone-200"
-            >
-              <Code className="w-3.5 h-3.5 text-rose-600" />
-              <span>أكواد النشر</span>
-            </button>
+            {/* Developer Deployment Code Modal (Admin only) */}
+            {adminUser && (
+              <button
+                onClick={onOpenDocs}
+                title="كود Supabase و Edge Function جاهز للنسخ"
+                className="hidden xl:flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors border border-stone-200"
+              >
+                <Code className="w-3.5 h-3.5 text-rose-600" />
+                <span>أكواد النشر</span>
+              </button>
+            )}
 
             {/* Wishlist Trigger Button */}
             <button
@@ -398,6 +409,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Truck className={`w-3.5 h-3.5 ${activeTab === 'driver' ? 'text-stone-950' : 'text-amber-600'}`} />
             <span>المندوب 🛵</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('employee-assistant')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all cursor-pointer ${
+              activeTab === 'employee-assistant'
+                ? 'bg-rose-600 text-white shadow-xs font-black'
+                : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+            }`}
+          >
+            <Bot className={`w-3.5 h-3.5 ${activeTab === 'employee-assistant' ? 'text-white' : 'text-rose-600'}`} />
+            <span>مساعد الموظفين 🤖</span>
           </button>
 
           <button

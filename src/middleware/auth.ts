@@ -10,10 +10,27 @@ export function getAdminJwtSecret(): string | null {
   return secret || null;
 }
 
+export const VALID_EMPLOYEE_CODES = [
+  'EMP001',
+  'EMP002',
+  'EMP003',
+  'EMP004',
+  'EMP005',
+  'EMP006',
+  'EMP007',
+  'EMP008',
+] as const;
+
+export type ValidEmployeeCode = (typeof VALID_EMPLOYEE_CODES)[number];
+
+export function isValidEmployeeCode(code: string): code is ValidEmployeeCode {
+  return (VALID_EMPLOYEE_CODES as readonly string[]).includes(code.trim().toUpperCase());
+}
+
 export interface AuthUser {
   uid: string;
   email?: string;
-  role: 'admin' | 'staff' | 'driver' | 'customer';
+  role: 'admin' | 'staff' | 'driver' | 'customer' | 'employee';
   username?: string;
   displayName?: string;
   emailVerified?: boolean;
@@ -88,6 +105,9 @@ export function verifyAdminToken(token: string): AuthUser | null {
     if (!decoded.exp || Date.now() > decoded.exp) {
       return null; // Expired
     }
+    if (decoded.role === 'employee') {
+      return null; // Employee tokens must NEVER satisfy verifyAdminToken
+    }
 
     return {
       uid: 'admin-super-uid',
@@ -97,6 +117,77 @@ export function verifyAdminToken(token: string): AuthUser | null {
       displayName: 'مدير المتجر',
       emailVerified: true,
       isSuperAdmin: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function createEmployeeToken(employeeCode: string): string {
+  const normalizedCode = employeeCode.trim().toUpperCase();
+  if (!isValidEmployeeCode(normalizedCode)) {
+    throw new Error('رمز الموظف غير صالح. الرموز المعتمدة من EMP001 إلى EMP008 فقط.');
+  }
+  const secret = getAdminJwtSecret();
+  if (!secret) {
+    throw new Error('ADMIN_JWT_SECRET or SESSION_SECRET must be configured before issuing employee tokens.');
+  }
+
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: normalizedCode,
+      role: 'employee',
+      employeeCode: normalizedCode,
+      exp,
+    })
+  ).toString('base64url');
+
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(`${header}.${payload}`)
+    .digest('base64url');
+
+  return `${header}.${payload}.${signature}`;
+}
+
+export function verifyEmployeeToken(token: string): AuthUser | null {
+  try {
+    const secret = getAdminJwtSecret();
+    if (!secret) return null;
+
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, payload, signature] = parts;
+
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${header}.${payload}`)
+      .digest('base64url');
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSignature);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!decoded.exp || Date.now() > decoded.exp) {
+      return null;
+    }
+    if (decoded.role !== 'employee' || typeof decoded.employeeCode !== 'string' || !isValidEmployeeCode(decoded.employeeCode)) {
+      return null;
+    }
+
+    const code = decoded.employeeCode.trim().toUpperCase();
+    return {
+      uid: `employee-${code}`,
+      role: 'employee',
+      username: code,
+      displayName: `موظف (${code})`,
+      emailVerified: false,
+      isSuperAdmin: false,
     };
   } catch {
     return null;
@@ -116,7 +207,7 @@ function isNonFirebaseJwt(token: string): boolean {
 }
 
 /**
- * Resolves either a signed Admin session token or a Firebase ID Token into an RBAC AuthUser.
+ * Resolves either a signed Admin/Employee session token or a Firebase ID Token into an RBAC AuthUser.
  * Returns null if the token is invalid or expired.
  */
 export async function resolveAuthenticatedUser(token: string): Promise<AuthUser | null> {
@@ -128,6 +219,12 @@ export async function resolveAuthenticatedUser(token: string): Promise<AuthUser 
   const adminSession = verifyAdminToken(token);
   if (adminSession) {
     return adminSession;
+  }
+
+  // 2. Check signed Employee session token (restricted to employee role only)
+  const employeeSession = verifyEmployeeToken(token);
+  if (employeeSession) {
+    return employeeSession;
   }
 
   // Never pass expired/unrecognized HS256 admin JWTs or kid-less tokens to Firebase verifyIdToken
@@ -218,3 +315,4 @@ export const requireRoles = (...allowedRoles: Array<AuthUser['role']>) => {
 export const requireAdmin = requireRoles('admin');
 export const requireStaffOrAdmin = requireRoles('admin', 'staff');
 export const requireDriverOrStaffOrAdmin = requireRoles('admin', 'staff', 'driver');
+export const requireEmployeeOrAdmin = requireRoles('employee', 'admin');

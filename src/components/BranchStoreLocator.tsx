@@ -461,9 +461,9 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
                   <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mb-3">
                     <AlertCircle className="w-6 h-6" />
                   </div>
-                  <h3 className="text-sm font-black text-stone-800 mb-1">خريطة الفروع التفاعلية غير مفعّلة</h3>
+                  <h3 className="text-sm font-black text-stone-800 mb-1">خريطة الفروع غير متاحة حالياً</h3>
                   <p className="text-xs text-stone-600 max-w-md leading-relaxed">
-                    يرجى ضبط المتغير البيئي <code className="bg-stone-200 px-1.5 py-0.5 rounded font-mono text-[11px]">VITE_GOOGLE_MAPS_API_KEY</code> في إعدادات البيئة لتفعيل خريطة Google Maps. يمكنك تصفح عناوين الفروع والتواصل عبر الواتساب من القائمة الجانبية.
+                    يمكنكِ تصفح عناوين وأرقام هواتف جميع الفروع والتواصل معنا مباشرة عبر واتساب من القائمة الجانبية.
                   </p>
                 </div>
               ) : (

@@ -58,17 +58,25 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
           </p>
 
           <div className="flex items-center gap-2 mb-6">
-            <span className="text-2xl font-black text-rose-600">
-              {pricing.finalPrice} {settings.currency}
-            </span>
-            {pricing.hasDiscount && (
-              <span className="text-sm text-stone-400 line-through">
-                {pricing.originalPrice} {settings.currency}
-              </span>
-            )}
-            {pricing.hasDiscount && (
-              <span className="bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow-xs">
-                خصم {pricing.discountPercent}%
+            {pricing.finalPrice > 0 ? (
+              <>
+                <span className="text-2xl font-black text-rose-600">
+                  {pricing.finalPrice} {settings.currency}
+                </span>
+                {pricing.hasDiscount && (
+                  <span className="text-sm text-stone-400 line-through">
+                    {pricing.originalPrice} {settings.currency}
+                  </span>
+                )}
+                {pricing.hasDiscount && (
+                  <span className="bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow-xs">
+                    خصم {pricing.discountPercent}%
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-base font-bold text-stone-700">
+                السعر حسب الطلب عبر واتساب
               </span>
             )}
           </div>

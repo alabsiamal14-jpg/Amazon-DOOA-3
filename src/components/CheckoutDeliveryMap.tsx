@@ -28,7 +28,7 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
   // Reverse geocodes the coordinates to address via Geocoding REST API (CF5/Section 5 compliant)
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
     if (!mapsApiKey) {
-      setErrorError('مفتاح خرائط Google غير مضبوط (VITE_GOOGLE_MAPS_API_KEY). يمكنك إدخال العنوان يدوياً.');
+      setErrorError('تعذر تحديد الموقع تلقائياً عبر الخريطة حالياً. يمكنكِ إدخال تفاصيل العنوان يدوياً.');
       return;
     }
     try {
@@ -177,7 +177,7 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
         <div className="flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="leading-relaxed">
-            الخريطة التفاعلية غير مفعّلة لعدم ضبط <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[10px]">VITE_GOOGLE_MAPS_API_KEY</code> في متغيرات البيئة. يرجى إدخال تفاصيل عنوان التوصيل يدوياً أعلاه.
+            تحديد الموقع عبر الخريطة غير متاح حالياً. يرجى إدخال تفاصيل عنوان التوصيل يدوياً أعلاه.
           </p>
         </div>
       </div>

@@ -184,6 +184,45 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "conversationId", "role", "content", "createdAt"]
+    },
+    "EmployeeDraft": {
+      "title": "EmployeeDraft",
+      "description": "Unpriced AI-extracted product draft submitted by an employee for admin pricing and review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "employee_code": {
+          "type": "string",
+          "enum": ["EMP001", "EMP002", "EMP003", "EMP004", "EMP005", "EMP006", "EMP007", "EMP008", "ADMIN"]
+        },
+        "title_ar": { "type": "string", "maxLength": 300 },
+        "description_ar": { "type": "string", "maxLength": 4000 },
+        "category_id": { "type": "string", "maxLength": 80 },
+        "category_name": { "type": "string", "maxLength": 120 },
+        "brand": { "type": "string", "maxLength": 150 },
+        "size_or_volume": { "type": "string", "maxLength": 100 },
+        "ingredients": { "type": "string", "maxLength": 2000 },
+        "how_to_use": { "type": "string", "maxLength": 2000 },
+        "tags": { "type": "array" },
+        "image_url": { "type": "string", "maxLength": 900000 },
+        "gallery_images": { "type": "array" },
+        "source_type": {
+          "type": "string",
+          "enum": ["single_image", "multi_image_single_product", "batch_images", "video", "whatsapp_chat"]
+        },
+        "price": { "type": "number" },
+        "original_price": { "type": "number" },
+        "discount_price": { "type": "number" },
+        "pricing_status_label": { "type": "string", "maxLength": 120 },
+        "status": {
+          "type": "string",
+          "enum": ["pending_pricing", "published"]
+        },
+        "published_product_id": { "type": "string", "maxLength": 128 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "employee_code", "title_ar", "status", "pricing_status_label", "created_at"]
     }
   },
   "firestore": {
@@ -230,6 +269,10 @@
     "/pricing_ai_messages/{msgId}": {
       "schema": "PricingMessage",
       "description": "Messages in pricing chat sessions"
+    },
+    "/ai_employee_drafts/{draftId}": {
+      "schema": "EmployeeDraft",
+      "description": "Employee-submitted AI product drafts awaiting admin pricing"
     }
   }
 }

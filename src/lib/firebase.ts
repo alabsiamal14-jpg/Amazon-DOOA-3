@@ -26,6 +26,7 @@ import {
   where,
   onSnapshot,
   getDocFromServer,
+  setLogLevel,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Product, CartItem, Order, OrderStatus, UserProfile } from '../types';
@@ -82,12 +83,31 @@ let isSigningIn = false;
 // Cache the access token in memory.
 let cachedAccessToken: string | null = null;
 
+// Suppress benign SDK warn logs (such as GrpcConnection idle Listen stream CANCELLED) while keeping error logs
+setLogLevel('error');
+
 // Firestore Instance with exact Database ID from firebase-applet-config.json
 export const firestoreDatabaseId = firebaseConfig.firestoreDatabaseId || '(default)';
 
-export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+function createFirestoreClient() {
+  const targetDbId =
+    firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+      ? firebaseConfig.firestoreDatabaseId
+      : undefined;
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+      },
+      targetDbId
+    );
+  } catch {
+    return targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
+  }
+}
+
+export const db = createFirestoreClient();
 
 // Helper for resilient async operations with timeout fallback
 export async function withFirestoreTimeout<T>(promise: Promise<T>, timeoutMs = 4500): Promise<T> {
@@ -150,14 +170,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(friendly || (error instanceof Error ? error.message : String(error)));
 }
 
-// Connection verification test
+// Connection verification test (lightweight single-doc probe)
 export async function testConnection(): Promise<boolean> {
   try {
-    const snap = await withFirestoreTimeout(getDocs(collection(db, 'products')), 3000);
-    return !snap.empty;
+    await withFirestoreTimeout(getDocFromServer(doc(db, 'test', 'connection')), 3000);
+    return true;
   } catch (error) {
-    if (error instanceof Error) {
-      console.warn('[Firebase] Firestore client connection probe:', error.message);
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('[Firebase] Please check your Firebase configuration: the client is offline.');
     }
     return false;
   }
@@ -167,11 +187,27 @@ export async function testConnection(): Promise<boolean> {
 // 2. ERROR TRANSLATION (ARABIC USER-FRIENDLY MESSAGES)
 // =========================================================================
 
+function isQuotaExceededError(err: any): boolean {
+  if (!err || err.code !== 'resource-exhausted') return false;
+  const msg = typeof err?.message === 'string' ? err.message.toLowerCase() : '';
+  return (
+    msg.includes('quota') ||
+    msg.includes('read units') ||
+    msg.includes('write') ||
+    msg.includes('free daily') ||
+    msg.includes('rate')
+  );
+}
+
 export function getFriendlyFirebaseErrorMessage(err: any): string {
   if (!err) return 'حدث خطأ غير متوقع، يرجى المحاولة ثانية.';
   const code = err.code || '';
   if (code !== 'auth/popup-closed-by-user') {
-    console.error('[Firebase Error Code]:', code, err);
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firebase Quota Notice]:', code, err?.message || err);
+    } else {
+      console.error('[Firebase Error Code]:', code, err);
+    }
   }
   switch (code) {
     case 'auth/invalid-credential':
@@ -195,7 +231,12 @@ export function getFriendlyFirebaseErrorMessage(err: any): string {
       return 'تم تعطيل هذا الحساب من قِبل إدارة النظام.';
     case 'permission-denied':
       return 'ليس لديك الصلاحيات الكافية لتنفيذ هذه العملية.';
-    case 'resource-exhausted':
+    case 'resource-exhausted': {
+      if (isQuotaExceededError(err)) {
+        return 'تم تجاوز الحصة اليومية المجانية لقاعدة بيانات Firestore. يرجى المحاولة لاحقاً أو ترقية الخطة.';
+      }
+      return 'حجم بيانات المنتج أو الصورة يتجاوز الحد المسموح (1 ميجابايت). يرجى اختيار صورة أصغر أو المحاولة مجدداً.';
+    }
     case 'invalid-argument':
       return 'حجم بيانات المنتج أو الصورة يتجاوز الحد المسموح (1 ميجابايت). يرجى اختيار صورة أصغر أو المحاولة مجدداً.';
     case 'unavailable':
@@ -284,7 +325,7 @@ export async function syncUserProfile(
   
   const userRef = doc(db, 'users', firebaseUser.uid);
   try {
-    const snap = await getDoc(userRef);
+    const snap = await withFirestoreTimeout(getDoc(userRef), 5000);
     if (snap.exists()) {
       const data = snap.data();
       return {
@@ -314,17 +355,26 @@ export async function syncUserProfile(
   };
 
   try {
-    await setDoc(userRef, {
-      ...newProfile,
-      role: 'customer',
-    });
+    await withFirestoreTimeout(
+      setDoc(userRef, {
+        ...newProfile,
+        role: 'customer',
+      }),
+      5000
+    );
     if (role === 'admin') {
-      await setDoc(userRef, { role: 'admin', updatedAt: new Date().toISOString() }, { merge: true });
-      await setDoc(doc(db, 'admins', firebaseUser.uid), {
-        email: firebaseUser.email,
-        role: 'admin',
-        createdAt: new Date().toISOString(),
-      });
+      await withFirestoreTimeout(
+        setDoc(userRef, { role: 'admin', updatedAt: new Date().toISOString() }, { merge: true }),
+        5000
+      );
+      await withFirestoreTimeout(
+        setDoc(doc(db, 'admins', firebaseUser.uid), {
+          email: firebaseUser.email,
+          role: 'admin',
+          createdAt: new Date().toISOString(),
+        }),
+        5000
+      );
     }
   } catch (err) {
     console.warn('Could not persist new user profile in Firestore:', err);
@@ -420,9 +470,10 @@ export function subscribeToCartFirestore(
  */
 export async function fetchCartFirestore(userId: string, allProducts: Product[]): Promise<CartItem[]> {
   if (!userId) return [];
+  const path = `users/${userId}/cart`;
   try {
     const cartCol = collection(db, 'users', userId, 'cart');
-    const snap = await withFirestoreTimeout(getDocs(cartCol), 3500);
+    const snap = await withFirestoreTimeout(getDocs(cartCol), 5000);
     if (snap.empty) return [];
 
     const cartItems: CartItem[] = [];
@@ -451,8 +502,7 @@ export async function fetchCartFirestore(userId: string, allProducts: Product[])
     });
     return cartItems;
   } catch (err) {
-    console.warn('Failed to load cart from Firestore:', err);
-    return [];
+    handleFirestoreError(err, OperationType.LIST, path);
   }
 }
 
@@ -461,18 +511,22 @@ export async function fetchCartFirestore(userId: string, allProducts: Product[])
  */
 export async function saveCartItemFirestore(userId: string, item: CartItem): Promise<void> {
   if (!userId || !item.product?.id) return;
+  const path = `users/${userId}/cart/${item.product.id}`;
   try {
     const docRef = doc(db, 'users', userId, 'cart', item.product.id);
-    await setDoc(docRef, {
-      productId: item.product.id,
-      quantity: item.quantity,
-      title_ar: item.product.title_ar,
-      price: item.product.discount_price ?? item.product.original_price,
-      image_url: item.product.image_url,
-      updatedAt: new Date().toISOString(),
-    });
+    await withFirestoreTimeout(
+      setDoc(docRef, {
+        productId: item.product.id,
+        quantity: item.quantity,
+        title_ar: item.product.title_ar,
+        price: item.product.discount_price ?? item.product.original_price,
+        image_url: item.product.image_url,
+        updatedAt: new Date().toISOString(),
+      }),
+      6000
+    );
   } catch (err) {
-    console.warn('Failed to save cart item in Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
@@ -481,10 +535,11 @@ export async function saveCartItemFirestore(userId: string, item: CartItem): Pro
  */
 export async function removeCartItemFirestore(userId: string, productId: string): Promise<void> {
   if (!userId || !productId) return;
+  const path = `users/${userId}/cart/${productId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'cart', productId));
+    await withFirestoreTimeout(deleteDoc(doc(db, 'users', userId, 'cart', productId)), 6000);
   } catch (err) {
-    console.warn('Failed to remove cart item from Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
@@ -493,13 +548,14 @@ export async function removeCartItemFirestore(userId: string, productId: string)
  */
 export async function clearCartFirestore(userId: string): Promise<void> {
   if (!userId) return;
+  const path = `users/${userId}/cart`;
   try {
     const cartCol = collection(db, 'users', userId, 'cart');
-    const snap = await getDocs(cartCol);
+    const snap = await withFirestoreTimeout(getDocs(cartCol), 6000);
     const deletePromises = snap.docs.map((d) => deleteDoc(d.ref));
-    await Promise.all(deletePromises);
+    await withFirestoreTimeout(Promise.all(deletePromises), 6000);
   } catch (err) {
-    console.warn('Failed to clear cart in Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
@@ -512,47 +568,38 @@ export async function mergeCartOnLogin(
   allProducts: Product[]
 ): Promise<CartItem[]> {
   if (!userId) return guestCart;
-  try {
-    const serverCart = await fetchCartFirestore(userId, allProducts);
-    const mergedMap = new Map<string, CartItem>();
+  const serverCart = await fetchCartFirestore(userId, allProducts);
+  const mergedMap = new Map<string, CartItem>();
 
-    // 1. Add existing Firestore items
-    for (const item of serverCart) {
-      mergedMap.set(item.product.id, { ...item });
-    }
-
-    // 2. Merge guest items: sum quantities if item already exists in server cart
-    for (const guestItem of guestCart) {
-      if (mergedMap.has(guestItem.product.id)) {
-        const existing = mergedMap.get(guestItem.product.id)!;
-        existing.quantity = Math.max(existing.quantity, guestItem.quantity);
-      } else {
-        mergedMap.set(guestItem.product.id, { ...guestItem });
-      }
-    }
-
-    const mergedList = Array.from(mergedMap.values());
-
-    // 3. Persist merged result back to Firestore
-    for (const item of mergedList) {
-      await saveCartItemFirestore(userId, item);
-    }
-
-    return mergedList;
-  } catch (err) {
-    console.warn('Failed to merge cart on login:', err);
-    return guestCart;
+  // 1. Add existing Firestore items
+  for (const item of serverCart) {
+    mergedMap.set(item.product.id, { ...item });
   }
+
+  // 2. Merge guest items cleanly without duplication
+  for (const guestItem of guestCart) {
+    if (mergedMap.has(guestItem.product.id)) {
+      const existing = mergedMap.get(guestItem.product.id)!;
+      existing.quantity = Math.max(existing.quantity, guestItem.quantity);
+    } else {
+      mergedMap.set(guestItem.product.id, { ...guestItem });
+    }
+  }
+
+  const mergedList = Array.from(mergedMap.values());
+
+  // 3. Persist merged result back to Firestore
+  for (const item of mergedList) {
+    await saveCartItemFirestore(userId, item);
+  }
+
+  return mergedList;
 }
 
 export async function syncCartFirestore(userId: string, items: CartItem[]): Promise<void> {
   if (!userId) return;
-  try {
-    for (const it of items) {
-      await saveCartItemFirestore(userId, it);
-    }
-  } catch (err) {
-    console.warn('Failed to sync cart to Firestore:', err);
+  for (const it of items) {
+    await saveCartItemFirestore(userId, it);
   }
 }
 
@@ -562,9 +609,10 @@ export async function syncCartFirestore(userId: string, items: CartItem[]): Prom
 
 export async function fetchWishlistFirestore(userId: string): Promise<string[]> {
   if (!userId) return [];
+  const path = `users/${userId}/favorites`;
   try {
     const favCol = collection(db, 'users', userId, 'favorites');
-    const snap = await withFirestoreTimeout(getDocs(favCol), 3500);
+    const snap = await withFirestoreTimeout(getDocs(favCol), 5000);
     if (snap.empty) return [];
 
     const ids: string[] = [];
@@ -573,33 +621,37 @@ export async function fetchWishlistFirestore(userId: string): Promise<string[]> 
     });
     return ids;
   } catch (err) {
-    console.warn('Failed to load wishlist from Firestore:', err);
-    return [];
+    handleFirestoreError(err, OperationType.LIST, path);
   }
 }
 
 export async function addWishlistFirestore(userId: string, product: Product): Promise<void> {
   if (!userId || !product?.id) return;
+  const path = `users/${userId}/favorites/${product.id}`;
   try {
     const docRef = doc(db, 'users', userId, 'favorites', product.id);
-    await setDoc(docRef, {
-      productId: product.id,
-      title_ar: product.title_ar,
-      price: product.discount_price ?? product.original_price,
-      image_url: product.image_url,
-      addedAt: new Date().toISOString(),
-    });
+    await withFirestoreTimeout(
+      setDoc(docRef, {
+        productId: product.id,
+        title_ar: product.title_ar,
+        price: product.discount_price ?? product.original_price,
+        image_url: product.image_url,
+        addedAt: new Date().toISOString(),
+      }),
+      6000
+    );
   } catch (err) {
-    console.warn('Failed to add to wishlist in Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function removeWishlistFirestore(userId: string, productId: string): Promise<void> {
   if (!userId || !productId) return;
+  const path = `users/${userId}/favorites/${productId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'favorites', productId));
+    await withFirestoreTimeout(deleteDoc(doc(db, 'users', userId, 'favorites', productId)), 6000);
   } catch (err) {
-    console.warn('Failed to remove from wishlist in Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
@@ -607,7 +659,11 @@ export async function removeWishlistFirestore(userId: string, productId: string)
 // 6. CLOUD FIRESTORE PRODUCTS SERVICES
 // =========================================================================
 
-export async function fetchProductsFirestore(): Promise<{ products: Product[]; isFirebase: boolean }> {
+export async function fetchProductsFirestore(): Promise<{
+  products: Product[];
+  isFirebase: boolean;
+  error?: string;
+}> {
   try {
     const productsRef = collection(db, 'products');
     const snap = await withFirestoreTimeout(getDocs(productsRef), 12000);
@@ -618,7 +674,11 @@ export async function fetchProductsFirestore(): Promise<{ products: Product[]; i
         saveStoredProducts(INITIAL_PRODUCTS);
         return { products: INITIAL_PRODUCTS, isFirebase: true };
       }
-      return { products: getStoredProducts(), isFirebase: false };
+      return {
+        products: getStoredProducts(),
+        isFirebase: false,
+        error: 'تعذر تهيئة المنتجات الأولية في Firestore.',
+      };
     }
 
     const items: Product[] = [];
@@ -679,8 +739,13 @@ export async function fetchProductsFirestore(): Promise<{ products: Product[]; i
     saveStoredProducts(combinedProducts);
     return { products: combinedProducts, isFirebase: true };
   } catch (err) {
-    console.warn('Error fetching products from Firestore, using local fallback:', err);
-    return { products: getStoredProducts(), isFirebase: false };
+    const friendly = getFriendlyFirebaseErrorMessage(err);
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firebase] Firestore daily read quota reached; using local fallback.');
+    } else {
+      console.error('[Firebase] Error fetching products from Firestore, using local fallback:', err);
+    }
+    return { products: getStoredProducts(), isFirebase: false, error: friendly };
   }
 }
 
@@ -718,7 +783,7 @@ export async function saveProductFirestore(product: Product): Promise<void> {
   const path = `products/${product.id}`;
   const cleanTitle = String(product.title_ar || '').trim().slice(0, 300) || 'منتج جديد';
   const rawPrice = Number(product.original_price);
-  const safeOriginalPrice = Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : 50;
+  const safeOriginalPrice = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
   const rawDiscount = product.discount_price !== undefined && product.discount_price !== null ? Number(product.discount_price) : null;
   const safeDiscountPrice = rawDiscount !== null && Number.isFinite(rawDiscount) && rawDiscount > 0 ? rawDiscount : null;
   const safeVideoUrl =
@@ -834,44 +899,48 @@ export async function deleteProductFirestore(productId: string): Promise<void> {
 // =========================================================================
 
 export async function createOrderFirestore(order: Order, userId?: string): Promise<void> {
+  const path = `orders/${order.id}`;
   const currentOrders = getStoredOrders();
-  saveStoredOrders([order, ...currentOrders]);
+  saveStoredOrders([order, ...currentOrders.filter((o) => o.id !== order.id)]);
 
   try {
     const orderDocRef = doc(db, 'orders', order.id);
-    await setDoc(orderDocRef, {
-      id: order.id,
-      order_number: order.order_number,
-      userId: userId || order.userId || 'guest',
-      customer_name: order.customer_name,
-      customer_phone: order.customer_phone,
-      customer_email: order.customer_email || '',
-      customer_city: order.city,
-      customer_address: order.address,
-      items: order.items || [],
-      subtotal: Number(order.subtotal || 0),
-      discount_amount: Number(order.discount_amount || 0),
-      coupon_code: order.coupon_code || null,
-      delivery_fee: Number(order.delivery_fee || 0),
-      total_amount: Number(order.total_amount || 0),
-      currency: 'ريال',
-      status: order.status || 'pending',
-      payment_method: order.payment_method || 'cod',
-      delivery_speed: order.delivery_speed || 'توصيل قياسي',
-      whatsapp_sent: Boolean(order.whatsapp_sent ?? true),
-      notes: order.notes || '',
-      createdAt: order.created_at || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    await withFirestoreTimeout(
+      setDoc(orderDocRef, {
+        id: order.id,
+        order_number: order.order_number,
+        userId: userId || order.userId || 'guest',
+        customer_name: order.customer_name,
+        customer_phone: order.customer_phone,
+        customer_email: order.customer_email || '',
+        customer_city: order.city,
+        customer_address: order.address,
+        items: order.items || [],
+        subtotal: Number(order.subtotal || 0),
+        discount_amount: Number(order.discount_amount || 0),
+        coupon_code: order.coupon_code || null,
+        delivery_fee: Number(order.delivery_fee || 0),
+        total_amount: Number(order.total_amount || 0),
+        currency: 'ريال',
+        status: order.status || 'pending',
+        payment_method: order.payment_method || 'cod',
+        delivery_speed: order.delivery_speed || 'توصيل قياسي',
+        whatsapp_sent: Boolean(order.whatsapp_sent ?? true),
+        notes: order.notes || '',
+        createdAt: order.created_at || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      6000
+    );
   } catch (err) {
-    console.warn('Failed to save order to Firestore, cached locally:', err);
+    handleFirestoreError(err, OperationType.CREATE, path);
   }
 }
 
 export async function fetchOrdersFirestore(
   userId?: string,
   isAdmin?: boolean
-): Promise<{ orders: Order[]; isFirebase: boolean }> {
+): Promise<{ orders: Order[]; isFirebase: boolean; error?: string }> {
   try {
     const ordersCol = collection(db, 'orders');
     let q = query(ordersCol);
@@ -880,7 +949,7 @@ export async function fetchOrdersFirestore(
       q = query(ordersCol, where('userId', '==', userId));
     }
 
-    const snap = await withFirestoreTimeout(getDocs(q), 3500);
+    const snap = await withFirestoreTimeout(getDocs(q), 5000);
     if (snap.empty) {
       return { orders: getStoredOrders(), isFirebase: true };
     }
@@ -921,8 +990,13 @@ export async function fetchOrdersFirestore(
     saveStoredOrders(items);
     return { orders: items, isFirebase: true };
   } catch (err) {
-    console.warn('Failed to load orders from Firestore:', err);
-    return { orders: getStoredOrders(), isFirebase: false };
+    const friendly = getFriendlyFirebaseErrorMessage(err);
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firebase] Firestore daily read quota reached while loading orders; using local fallback.');
+    } else {
+      console.error('[Firebase] Failed to load orders from Firestore:', err);
+    }
+    return { orders: getStoredOrders(), isFirebase: false, error: friendly };
   }
 }
 
@@ -937,8 +1011,9 @@ export async function updateOrderStatusFirestore(
     driver_phone?: string;
   }
 ): Promise<void> {
-  const orders = getStoredOrders();
-  const updated = orders.map((o) =>
+  const path = `orders/${orderId}`;
+  const previousOrders = getStoredOrders();
+  const updated = previousOrders.map((o) =>
     o.id === orderId
       ? {
           ...o,
@@ -948,7 +1023,6 @@ export async function updateOrderStatusFirestore(
         }
       : o
   );
-  saveStoredOrders(updated);
 
   try {
     const docRef = doc(db, 'orders', orderId);
@@ -960,9 +1034,11 @@ export async function updateOrderStatusFirestore(
     if (status === 'delivered') {
       updatePayload.delivered_at = new Date().toISOString();
     }
-    await updateDoc(docRef, updatePayload);
+    await withFirestoreTimeout(updateDoc(docRef, updatePayload), 6000);
+    saveStoredOrders(updated);
   } catch (err) {
-    console.warn('Failed to update order status in Firestore:', err);
+    saveStoredOrders(previousOrders);
+    handleFirestoreError(err, OperationType.UPDATE, path);
   }
 }
 
@@ -973,17 +1049,21 @@ export async function updateOrderDriverFirestore(
   orderId: string,
   driverInfo: { driver_name: string; driver_phone: string; driver_id?: string }
 ): Promise<void> {
+  const path = `orders/${orderId}`;
   try {
     const docRef = doc(db, 'orders', orderId);
-    await updateDoc(docRef, {
-      driver_name: driverInfo.driver_name,
-      driver_phone: driverInfo.driver_phone,
-      driver_id: driverInfo.driver_id || null,
-      status: 'shipped',
-      updatedAt: new Date().toISOString(),
-    });
+    await withFirestoreTimeout(
+      updateDoc(docRef, {
+        driver_name: driverInfo.driver_name,
+        driver_phone: driverInfo.driver_phone,
+        driver_id: driverInfo.driver_id || null,
+        status: 'shipped',
+        updatedAt: new Date().toISOString(),
+      }),
+      6000
+    );
   } catch (err) {
-    console.warn('Failed to update driver in Firestore:', err);
+    handleFirestoreError(err, OperationType.UPDATE, path);
   }
 }
 

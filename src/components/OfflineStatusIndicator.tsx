@@ -60,8 +60,11 @@ export const OfflineStatusIndicator: React.FC<OfflineStatusIndicatorProps> = ({
       if (onRetryConnection) {
         onRetryConnection();
       }
-      // Check actual connectivity via a head fetch
-      await fetch('/api/db/products', { method: 'HEAD', cache: 'no-store' });
+      // Check actual server connectivity via /api/health
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(`Health check failed (${res.status})`);
+      }
       setIsOffline(false);
       setShowRestored(true);
       setTimeout(() => setShowRestored(false), 3500);

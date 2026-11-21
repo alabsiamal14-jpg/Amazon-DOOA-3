@@ -196,12 +196,20 @@ const ProductCardComponent: React.FC<ProductCardProps> = ({
         <div>
           {/* Price */}
           <div className="flex items-baseline gap-2 mb-3.5 pt-2 border-t border-stone-100">
-            <span className="text-xl sm:text-2xl font-black text-rose-600">
-              {currentPrice} {settings.currency}
-            </span>
-            {hasDiscount && (
-              <span className="text-xs text-stone-400 line-through">
-                {product.original_price} {settings.currency}
+            {currentPrice > 0 ? (
+              <>
+                <span className="text-xl sm:text-2xl font-black text-rose-600">
+                  {currentPrice} {settings.currency}
+                </span>
+                {hasDiscount && (
+                  <span className="text-xs text-stone-400 line-through">
+                    {product.original_price} {settings.currency}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm font-bold text-stone-700">
+                السعر حسب الطلب عبر واتساب
               </span>
             )}
           </div>

@@ -164,7 +164,7 @@ export function generateSingleProductWhatsAppUrl(
   const message = `
 مرحباً، أود الاستفسار وطلب هذا المنتج من *${settings.storeName}*:
 ✨ *${product.title_ar}*
-💰 السعر: ${price} ${currency}
+💰 السعر: ${price > 0 ? `${price} ${currency}` : 'حسب الطلب'}
 
 هل المنتج متوفر حالياً للتوصيل؟
   `.trim();

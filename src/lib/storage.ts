@@ -1,4 +1,4 @@
-import { Product, StoreSettings, CartItem, Order, AdminUser } from '../types';
+import { Product, StoreSettings, CartItem, Order, AdminUser, EmployeeSession } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_SETTINGS } from '../data/initialData';
 
 const PRODUCTS_KEY = 'elen_beauty_products_v1';
@@ -300,6 +300,50 @@ export function resetToDefaults(): void {
   } catch (e) {
     console.error('Error resetting storage:', e);
   }
+}
+
+// =========================================================================
+// EMPLOYEE ASSISTANT SESSION STORAGE (ISOLATED FROM ADMIN SESSION)
+// =========================================================================
+const EMPLOYEE_SESSION_KEY = 'amazon_duaa_employee_session_v1';
+
+export function getEmployeeSession(): EmployeeSession | null {
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as EmployeeSession;
+    if (!parsed?.token || !parsed?.code || isJwtTokenExpired(parsed.token)) {
+      localStorage.removeItem(EMPLOYEE_SESSION_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function setEmployeeSession(session: EmployeeSession): void {
+  try {
+    localStorage.setItem(EMPLOYEE_SESSION_KEY, JSON.stringify(session));
+  } catch (e) {
+    console.error('Error saving employee session:', e);
+  }
+}
+
+export function clearEmployeeSession(): void {
+  try {
+    localStorage.removeItem(EMPLOYEE_SESSION_KEY);
+  } catch (e) {
+    console.error('Error clearing employee session:', e);
+  }
+}
+
+export function getEmployeeAuthHeaders(): Record<string, string> {
+  const emp = getEmployeeSession();
+  if (emp?.token) {
+    return { Authorization: `Bearer ${emp.token}` };
+  }
+  return {};
 }
 
 // =========================================================================

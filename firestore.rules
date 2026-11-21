@@ -155,5 +155,21 @@ service cloud.firestore {
     match /supplier_submissions/{document=**} {
       allow read, write: if true;
     }
+
+    // Smart Employee Assistant Drafts:
+    // Creation enforces employee_code (EMP001-EMP008 or ADMIN), status == 'pending_pricing', and price == null.
+    // Drafts never appear in /products until an Admin sets a valid price and publishes via backend.
+    match /ai_employee_drafts/{draftId} {
+      allow read: if true;
+      allow create: if draftId.matches('^[a-zA-Z0-9_\\-]+$')
+        && request.resource.data.title_ar is string
+        && request.resource.data.title_ar.size() > 0
+        && request.resource.data.title_ar.size() <= 300
+        && request.resource.data.employee_code in ['EMP001', 'EMP002', 'EMP003', 'EMP004', 'EMP005', 'EMP006', 'EMP007', 'EMP008', 'ADMIN']
+        && request.resource.data.price == null
+        && request.resource.data.original_price == null
+        && request.resource.data.status == 'pending_pricing';
+      allow update, delete: if true;
+    }
   }
 }

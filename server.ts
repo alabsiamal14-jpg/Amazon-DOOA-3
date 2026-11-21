@@ -28,6 +28,10 @@ import supplierAnalyzeRouter from './src/server/routes/whatsapp-supplier-ai/anal
 import supplierReviewRouter from './src/server/routes/whatsapp-supplier-ai/review.ts';
 import pricingRouter from './src/server/routes/pricing-ai/pricing.ts';
 import exportRouter from './src/server/routes/pricing-ai/export.ts';
+import employeeAssistantRouter from './src/server/routes/employee-assistant.ts';
+import bulkImportRouter from './src/server/routes/bulk-import.ts';
+import smartAssistantRouter from './src/server/routes/smart-assistant.ts';
+import engineeringArchitectRouter from './src/server/routes/engineering-architect.ts';
 import { adminAuth, adminDb, hasAdminServiceAccount } from './src/lib/firebase-admin.ts';
 import { syncFirestoreProduct, deleteFirestoreProduct, invalidateFirestoreCatalogCache } from './src/lib/firestore-catalog.ts';
 import firebaseConfig from './firebase-applet-config.json';
@@ -57,6 +61,7 @@ const PORT = cliPort || (process.env.NODE_ENV === 'production' ? Number(process.
 const HOST = getCliArg('--host') || '0.0.0.0';
 
 app.use(express.json({ limit: '25mb' }));
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
 // =========================================================================
 // Rate Limiting & Brute-force Protection for Admin Login
@@ -366,12 +371,30 @@ app.post('/api/db/products/public', async (req, res) => {
 
 app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) => {
   try {
-    const productData = req.body;
-    console.log('[DEBUG] Saving product:', productData?.id, productData?.title_ar);
-    if (!productData || !productData.id || !productData.title_ar) {
-      console.warn('[DEBUG] Invalid product data:', productData);
+    const rawProductData = req.body;
+    console.log('[DEBUG] Saving product:', rawProductData?.id, rawProductData?.title_ar);
+    if (!rawProductData || !rawProductData.id || !rawProductData.title_ar) {
+      console.warn('[DEBUG] Invalid product data:', rawProductData);
       return res.status(400).json({ error: 'Product id and title_ar are required' });
     }
+
+    // Server-side RBAC enforcement: staff users can only submit drafts and never self-publish
+    const isStaffOnly = req.user?.role === 'staff';
+    const enforcedStatus: 'draft' | 'published' = isStaffOnly
+      ? 'draft'
+      : rawProductData.status === 'draft'
+        ? 'draft'
+        : 'published';
+    const enforcedCreatorId = isStaffOnly
+      ? req.user?.uid || rawProductData.creator_id || null
+      : rawProductData.creator_id || req.user?.uid || null;
+
+    const productData = {
+      ...rawProductData,
+      status: enforcedStatus,
+      creator_id: enforcedCreatorId,
+    };
+
     const saved = await upsertProduct(productData);
     console.log('[DEBUG] Product saved successfully:', saved.productId);
 
@@ -399,8 +422,8 @@ app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) 
       reviews_count: Number(productData.reviews_count ?? 1),
       featured: Boolean(productData.featured),
       ai_generated: Boolean(productData.ai_generated),
-      status: productData.status || 'published',
-      creator_id: productData.creator_id || null,
+      status: enforcedStatus,
+      creator_id: enforcedCreatorId,
       contact_phone: productData.contact_phone || null,
       created_at: safeCreatedAt,
       createdAt: safeCreatedAt,
@@ -415,7 +438,7 @@ app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) 
   }
 });
 
-app.patch('/api/db/products/:productId/status', requireStaffOrAdmin, async (req: AuthRequest, res) => {
+app.patch('/api/db/products/:productId/status', requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { productId } = req.params;
     const { status } = req.body;
@@ -438,11 +461,13 @@ app.patch('/api/db/products/:productId/status', requireStaffOrAdmin, async (req:
       image_url: prod.imageUrl,
       tags: prod.tags as string[],
       status: status as 'draft' | 'published',
+      creator_id: prod.creatorId || undefined,
     });
     await syncFirestoreProduct(prod.productId, {
       status,
       updatedAt: new Date().toISOString(),
     });
+    invalidateFirestoreCatalogCache();
     return res.json(updated);
   } catch (error: any) {
     console.error('Failed to update product status:', error);
@@ -455,6 +480,7 @@ app.delete('/api/db/products/:productId', requireAdmin, async (req: AuthRequest,
     const { productId } = req.params;
     const deleted = await deleteProductFromDb(productId);
     await deleteFirestoreProduct(productId);
+    invalidateFirestoreCatalogCache();
     return res.json({ success: true, deleted });
   } catch (error: any) {
     console.error('Failed to delete product from Cloud SQL:', error);
@@ -567,12 +593,17 @@ app.post('/api/db/products/deduplicate', requireAdmin, async (req: AuthRequest, 
 // Cloud SQL Orders API - Protected: Admin/Staff see all, Drivers see delivery, Customers see only their own
 app.get('/api/db/orders', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const ordersList = await getAllOrders();
     const user = req.user;
 
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized: Authentication required' });
     }
+
+    if (user.role === 'employee') {
+      return res.status(403).json({ error: 'Forbidden: Employee accounts cannot view store orders' });
+    }
+
+    const ordersList = await getAllOrders();
 
     // 1. Admin or Staff (RBAC): full access to store orders
     if (hasRole(user, ['admin', 'staff'])) {
@@ -930,6 +961,18 @@ app.use('/api/whatsapp-supplier-ai', supplierReviewRouter);
 // Pricing AI & Supplier Memory Intelligence Router
 app.use('/api/pricing-ai', pricingRouter);
 app.use('/api/pricing-ai/export', exportRouter);
+
+// Smart Employee Assistant Router (EMP001..EMP008 drafts + Admin review)
+app.use('/api', employeeAssistantRouter);
+
+// Smart Bulk Product Import Router (Admin only — Phase 1)
+app.use('/api/admin/bulk-import', bulkImportRouter);
+
+// Comprehensive AI Smart Assistant Router (Admin only — Standalone Workspace)
+app.use('/api/admin/smart-assistant', smartAssistantRouter);
+
+// Amazon Duaa AI Engineering Architect Router (Admin only — Independent Engineering Safety & Quality System)
+app.use('/api/admin/engineering-architect', engineeringArchitectRouter);
 
 // Helper for generating dynamic smart fallback products based on image data
 function getDynamicSmartProductFallback(seedString: string) {

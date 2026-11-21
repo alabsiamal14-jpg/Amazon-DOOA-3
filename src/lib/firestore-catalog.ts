@@ -8,7 +8,12 @@ const DEFAULT_FALLBACK_IMAGE =
 
 let cachedCatalog: Product[] | null = null;
 let cachedAt = 0;
-const CATALOG_CACHE_TTL_MS = 5_000;
+let lastFirestoreCatalogError: string | null = null;
+const CATALOG_CACHE_TTL_MS = 60_000;
+
+export function getLastFirestoreCatalogError(): string | null {
+  return lastFirestoreCatalogError;
+}
 
 export function invalidateFirestoreCatalogCache(): void {
   cachedCatalog = null;
@@ -36,8 +41,12 @@ export function normalizeFirestoreProduct(docId: string, d: Record<string, any>)
     img = DEFAULT_FALLBACK_IMAGE;
   }
 
-  const rawOriginalPrice = Number(d.original_price ?? d.price ?? 50);
-  const originalPrice = Number.isFinite(rawOriginalPrice) && rawOriginalPrice > 0 ? rawOriginalPrice : 50;
+  const rawPriceField = d.original_price ?? d.price;
+  const rawOriginalPrice = Number(rawPriceField ?? 50);
+  const originalPrice =
+    rawPriceField !== undefined && rawPriceField !== null && Number.isFinite(rawOriginalPrice) && rawOriginalPrice >= 0
+      ? rawOriginalPrice
+      : 50;
 
   const discountPrice =
     d.discount_price !== undefined && d.discount_price !== null && Number.isFinite(Number(d.discount_price))
@@ -99,6 +108,7 @@ export async function fetchFirestoreCatalog(forceRefresh = false): Promise<Produ
       const sorted = sortProductsNewestFirst(items);
       cachedCatalog = sorted;
       cachedAt = Date.now();
+      lastFirestoreCatalogError = null;
       return sorted;
     } catch {
       // Fall back to public-read Client SDK when Admin IAM is unavailable
@@ -116,9 +126,15 @@ export async function fetchFirestoreCatalog(forceRefresh = false): Promise<Produ
     const sorted = sortProductsNewestFirst(items);
     cachedCatalog = sorted;
     cachedAt = Date.now();
+    lastFirestoreCatalogError = null;
     return sorted;
   } catch (err: any) {
-    console.warn('[Firestore Catalog] Could not read Firestore products:', err?.message || err);
+    lastFirestoreCatalogError = err?.message || String(err);
+    if (String(lastFirestoreCatalogError).toLowerCase().includes('quota')) {
+      console.warn('[Firestore Catalog] Daily quota limit reached, serving fallback catalog:', lastFirestoreCatalogError);
+    } else {
+      console.error('[Firestore Catalog] Could not read Firestore products:', lastFirestoreCatalogError);
+    }
     return cachedCatalog || [];
   }
 }
@@ -214,7 +230,7 @@ export async function syncFirestoreProduct(productId: string, payload: Record<st
     );
     return true;
   } catch (clientErr: any) {
-    console.info(`[Firestore Product Sync] Deferred for ${productId}: ${clientErr?.message || 'offline/restricted'}`);
+    console.error(`[Firestore Product Sync] Failed for ${productId}:`, clientErr?.message || clientErr);
     return false;
   }
 }
