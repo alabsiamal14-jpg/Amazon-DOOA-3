@@ -137,7 +137,7 @@ const ProductCardComponent: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Content Area */}
-      <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+      <div className="p-3 sm:p-5 flex-1 flex flex-col justify-between">
         <div>
           {/* Category & Rating */}
           <div className="flex items-center justify-between gap-2 mb-2 text-xs">
@@ -162,13 +162,13 @@ const ProductCardComponent: React.FC<ProductCardProps> = ({
 
           {/* Volume or Skin type tag if present */}
           {product.size_or_volume && (
-            <span className="text-[11px] text-stone-400 block mb-1.5 font-medium">
+            <span className="text-[11px] text-stone-600 block mb-1.5 font-semibold">
               {product.size_or_volume}
             </span>
           )}
 
           {/* Description Excerpt */}
-          <p className="text-xs text-stone-500 line-clamp-2 mb-3 leading-relaxed">
+          <p className="text-xs text-stone-700 line-clamp-2 mb-3 leading-relaxed">
             {product.description_ar}
           </p>
 

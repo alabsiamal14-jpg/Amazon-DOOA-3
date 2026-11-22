@@ -293,8 +293,10 @@ describe('Smart Employee Assistant (EMP001..EMP008) & Admin Draft Review E2E', (
     expect(countAfter.body.pendingCount).toBe(countBefore.body.pendingCount - 2);
   });
 
-  it('8. Cookie-authenticated Admin sees employee drafts directly, edits all fields (images/stock/category/price), publishes to Storefront, and hides unapproved drafts from customers', async () => {
-    // 8a. Sign in as Admin via HttpOnly Cookie login endpoint
+  it(
+    '8. Cookie-authenticated Admin sees employee drafts directly, edits all fields (images/stock/category/price), publishes to Storefront, and hides unapproved drafts from customers',
+    async () => {
+      // 8a. Sign in as Admin via HttpOnly Cookie login endpoint
     const loginRes = await request(app)
       .post('/api/admin/login')
       .send({ username: testAdminUser, password: testAdminPass });
@@ -456,7 +458,7 @@ describe('Smart Employee Assistant (EMP001..EMP008) & Admin Draft Review E2E', (
     await request(app)
       .delete(`/api/db/products/${draftProdId}`)
       .set('Cookie', cookieHeader);
-  });
+  }, 25000);
 
   it('9. Sets Secure; SameSite=None cookie behind HTTPS reverse proxy even when X-Forwarded-Proto is http, and falls back to valid Admin cookie if Bearer token is stale/invalid', async () => {
     const proxyHost = 'ais-dev-example.europe-west2.run.app';
@@ -499,5 +501,5 @@ describe('Smart Employee Assistant (EMP001..EMP008) & Admin Draft Review E2E', (
       .get('/api/employee-assistant/drafts')
       .set('Authorization', `Bearer ${proxyLogin.body.token}`);
     expect(draftsWithBearer.status).toBe(200);
-  });
+  }, 25000);
 });

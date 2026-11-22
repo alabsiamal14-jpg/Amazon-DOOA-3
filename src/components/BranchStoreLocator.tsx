@@ -181,6 +181,51 @@ interface BranchStoreLocatorProps {
 }
 
 export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings, onBackToStore }) => {
+  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+
+  if (!mapsApiKey) {
+    return <BranchStoreLocatorContent settings={settings} onBackToStore={onBackToStore} mapsApiKey="" />;
+  }
+
+  return (
+    <APIProvider
+      apiKey={mapsApiKey}
+      language="ar"
+      region="SA"
+    >
+      <BranchStoreLocatorInner settings={settings} onBackToStore={onBackToStore} mapsApiKey={mapsApiKey} />
+    </APIProvider>
+  );
+};
+
+interface BranchStoreLocatorInnerProps extends BranchStoreLocatorProps {
+  mapsApiKey: string;
+}
+
+const BranchStoreLocatorInner: React.FC<BranchStoreLocatorInnerProps> = ({ settings, onBackToStore, mapsApiKey }) => {
+  const placesLib = useMapsLibrary('places');
+
+  return (
+    <BranchStoreLocatorContent
+      settings={settings}
+      onBackToStore={onBackToStore}
+      mapsApiKey={mapsApiKey}
+      placesLib={placesLib}
+    />
+  );
+};
+
+interface BranchStoreLocatorContentProps extends BranchStoreLocatorProps {
+  mapsApiKey: string;
+  placesLib?: ReturnType<typeof useMapsLibrary<'places'>>;
+}
+
+const BranchStoreLocatorContent: React.FC<BranchStoreLocatorContentProps> = ({
+  settings,
+  onBackToStore,
+  mapsApiKey,
+  placesLib = null,
+}) => {
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(BRANCHES[0]);
   const [mapCenter, setMapCenter] = useState({ lat: 24.7118, lng: 46.6744 });
   const [mapZoom, setMapZoom] = useState(13);
@@ -197,8 +242,6 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
 
   // Places Autocomplete reference
   const autocompleteInputRef = useRef<HTMLInputElement>(null);
-  const placesLib = useMapsLibrary('places');
-  const map = useMap();
 
   useEffect(() => {
     const handleQuotaExceeded = () => {
@@ -250,7 +293,6 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
         };
         setUserLocation(uLoc);
         setIsLocating(false);
-        // Alert to user in toast if applicable
       },
       (err) => {
         console.warn('Geolocation error:', err);
@@ -265,8 +307,6 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
   useEffect(() => {
     if (!placesLib || !autocompleteInputRef.current) return;
 
-    // Use PlaceAutocompleteElement or program suggestions
-    // For React simple layout, use standard modern autocomplete binding
     const autocomplete = new placesLib.Autocomplete(autocompleteInputRef.current, {
       types: ['geocode', 'establishment'],
       fields: ['geometry', 'formatted_address'],
@@ -286,9 +326,7 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
     });
   }, [placesLib]);
 
-  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
-
-  const content = (
+  return (
     <>
       {/* Quota Exceeded Sticky Top Bar (Section 8 Case A Mandate) */}
       {quotaExceeded && (
@@ -569,20 +607,6 @@ export const BranchStoreLocator: React.FC<BranchStoreLocatorProps> = ({ settings
         </div>
       </div>
     </>
-  );
-
-  if (!mapsApiKey) {
-    return content;
-  }
-
-  return (
-    <APIProvider
-      apiKey={mapsApiKey}
-      language="ar"
-      region="SA"
-    >
-      {content}
-    </APIProvider>
   );
 };
 

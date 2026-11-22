@@ -31,6 +31,12 @@ import { ProductCard } from './ProductCard';
 import { searchProducts } from '../lib/search';
 import { TrustBadgesBar } from './TrustBadgesBar';
 
+import heroImg from '../assets/images/amazon_duaa_beauty_hero_1795377864380.jpg';
+import catSkincareImg from '../assets/images/category_skincare_1795377863580.jpg';
+import catPerfumesImg from '../assets/images/category_perfumes_1795377864376.jpg';
+import catMakeupImg from '../assets/images/category_makeup_1795377864161.jpg';
+import catHaircareImg from '../assets/images/category_haircare_1795377865544.jpg';
+
 export const getCategoryIconComponent = (iconName?: string) => {
   switch (iconName) {
     case 'Sparkles': return Sparkles;
@@ -45,6 +51,16 @@ export const getCategoryIconComponent = (iconName?: string) => {
     case 'Baby': return Baby;
     case 'Activity': return Activity;
     default: return Tag;
+  }
+};
+
+const getCategoryLocalImage = (catId: string, defaultImage?: string) => {
+  switch (catId) {
+    case 'skincare': return catSkincareImg;
+    case 'perfumes': return catPerfumesImg;
+    case 'makeup': return catMakeupImg;
+    case 'haircare': return catHaircareImg;
+    default: return defaultImage;
   }
 };
 
@@ -181,38 +197,48 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
   }, [products, selectedCategory, selectedTag, activeQuery, sortBy]);
 
   return (
-    <div className="pb-16">
-      {/* Hero Banner */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-rose-950 via-stone-900 to-rose-950 text-white py-12 sm:py-16 px-4 sm:px-6 lg:px-8 mb-8 rounded-3xl mx-4 sm:mx-6 lg:mx-8 shadow-xl mt-4">
-        {/* Subtle background glow */}
-        <div className="absolute -top-24 -left-24 w-96 h-96 bg-rose-500/20 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+    <div className="pb-20">
+      {/* Immersive Luxury Hero Banner (Sephora / Ulta Beauty Style) */}
+      <section className="relative overflow-hidden bg-stone-950 text-white py-16 sm:py-24 px-4 sm:px-8 lg:px-12 mb-10 rounded-3xl mx-4 sm:mx-6 lg:mx-8 shadow-2xl mt-4 border border-stone-800">
+        {/* Background Image with High-End Dark Gradient Overlay */}
+        <div className="absolute inset-0 z-0">
+          <img
+            src={heroImg}
+            alt="Amazon Duaa Atelier Luxury"
+            className="w-full h-full object-cover object-center opacity-45 scale-105 transform hover:scale-100 transition-transform duration-1000 ease-out"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-stone-950 via-stone-950/90 to-rose-950/70" />
+        </div>
 
-        <div className="relative max-w-4xl mx-auto text-center space-y-4">
-          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs font-semibold text-rose-200 border border-white/10 mb-2">
+        {/* Ambient Glow Effects */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-rose-600/25 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 max-w-4xl mx-auto text-center space-y-6">
+          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-4 py-2 rounded-full text-xs font-extrabold text-rose-200 border border-white/20 shadow-lg mb-2">
             <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-            <span>تسوق ذكي على طريقة أمازون | بحث دلالي وتوصيل فوري</span>
+            <span>معرض أمازون دعاء الفاخر | تسوقي أحدث صيحات التجميل والعناية العالمية</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight sm:leading-tight">
-            أمازون دعاء | وجهتكِ الأولى للتسوق الشامل <br className="hidden sm:inline" />
+          <h1 className="text-3xl sm:text-6xl font-black tracking-tight leading-tight sm:leading-tight">
+            إطلالة ملكية تليق بنقاء جمالك <br className="hidden sm:inline" />
             <span className="bg-gradient-to-r from-rose-300 via-rose-100 to-amber-200 bg-clip-text text-transparent">
-              عناية وتجميل، أجهزة ذكية، عطور فاخرة، ومستلزمات عصرية
+              عناية، عطور فاخرة، وأجهزة ذكية بأعلى معايير الجودة العالمية
             </span>
           </h1>
 
-          <p className="text-sm sm:text-base text-rose-100/80 max-w-2xl mx-auto leading-relaxed">
-            تصفحي أكبر تشكيلة من المنتجات الأصلية 100% مع ضمان الجودة، واطلبي مباشرة عبر الواتساب أو السلة مع الدفع عند الاستلام.
+          <p className="text-sm sm:text-base text-stone-300 max-w-2xl mx-auto leading-relaxed">
+            استمتعي بتجربة تسوق راقية مستوحاة من أشهر متاجر التجميل العالمية. منتجات أصلية 100%، توصيل سريع، ودفع عند الاستلام.
           </p>
 
-          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+          <div className="pt-3 flex flex-wrap items-center justify-center gap-3.5">
             {onOpenPublicAddProduct && (
               <button
                 onClick={onOpenPublicAddProduct}
-                className="bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-xl shadow-rose-900/30 ring-2 ring-rose-400/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+                className="bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs sm:text-sm font-black px-7 py-4 rounded-2xl flex items-center gap-2.5 shadow-xl shadow-rose-950/50 ring-2 ring-rose-400/40 hover:scale-[1.03] active:scale-[0.98] transition-all cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
-                <span>أضف منتجك مجاناً (بدون تسجيل دخول) ✨</span>
+                <Plus className="w-4 h-4 text-rose-200" />
+                <span>أضف منتجك مجاناً (بدون تسجيل) ✨</span>
               </button>
             )}
 
@@ -222,18 +248,18 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
               )}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg transition-all"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-bold px-6 py-4 rounded-2xl flex items-center gap-2.5 shadow-xl transition-all"
             >
-              <MessageCircle className="w-4 h-4" />
+              <MessageCircle className="w-4 h-4 text-emerald-200" />
               <span>خدمة العملاء والطلب الفوري عبر واتساب</span>
             </a>
 
             <button
               onClick={onOpenAdmin}
-              className="bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-bold px-5 py-3 rounded-2xl flex items-center gap-2 border border-white/20 transition-all cursor-pointer"
+              className="bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-bold px-6 py-4 rounded-2xl flex items-center gap-2.5 border border-white/20 backdrop-blur-sm transition-all cursor-pointer"
             >
-              <Sparkles className="w-4 h-4 text-rose-300" />
-              <span>لوحة إضافة المنتجات بالذكاء الاصطناعي</span>
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>لوحة الذكاء الاصطناعي للمنتجات</span>
             </button>
           </div>
         </div>
@@ -243,52 +269,52 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
       <TrustBadgesBar />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Amazon-style Visual Department Showcase */}
-        <div className="mb-8 bg-white p-4 sm:p-6 rounded-3xl border border-stone-200/80 shadow-xs">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-                <Layers className="w-4 h-4" />
+        {/* Luxury Visual Department Showcase */}
+        <div className="mb-10 bg-white p-5 sm:p-8 rounded-3xl border border-stone-200/90 shadow-sm">
+          <div className="flex items-center justify-between gap-3 mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold shadow-inner">
+                <Layers className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-sm sm:text-base font-black text-stone-900">
-                  تصفح حسب أقسام أمازون دعاء ({categories.length} أقسام)
+                <h2 className="text-base sm:text-lg font-black text-stone-900">
+                  أقسام أمازون دعاء الفاخرة ({categories.length} أقسام رئيسية)
                 </h2>
-                <p className="text-[11px] text-stone-500">
-                  انقر على أي قسم لتصفية المنتجات والانتقال الفوري إليها
+                <p className="text-xs text-stone-500">
+                  تصفحي التصنيفات العالمية وانتقلي فوراً إلى تشكيلات العناية والجمال
                 </p>
               </div>
             </div>
             {selectedCategory !== 'all' && (
               <button
                 onClick={() => handleCategorySelect('all')}
-                className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1"
+                className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
               >
                 <span>عرض كافة الأقسام</span>
-                <ChevronLeft className="w-3.5 h-3.5" />
+                <ChevronLeft className="w-4 h-4" />
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-2.5 sm:gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-3">
             {/* All button circular card */}
             <button
               onClick={() => handleCategorySelect('all')}
-              className={`group flex flex-col items-center p-2.5 rounded-2xl transition-all text-center border cursor-pointer ${
+              className={`group flex flex-col items-center p-3 rounded-2xl transition-all text-center border cursor-pointer ${
                 selectedCategory === 'all'
                   ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                  : 'bg-stone-50 hover:bg-rose-50/50 border-stone-200 text-stone-700'
+                  : 'bg-stone-50 hover:bg-rose-50/60 border-stone-200 text-stone-700'
               }`}
             >
               <div
-                className={`w-12 h-12 rounded-full flex items-center justify-center mb-1.5 transition-transform group-hover:scale-105 ${
-                  selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-rose-100/70 text-rose-600'
+                className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 transition-transform group-hover:scale-105 shadow-xs ${
+                  selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-600'
                 }`}
               >
-                <Sparkles className="w-5 h-5" />
+                <Sparkles className="w-6 h-6" />
               </div>
-              <span className="text-[11px] font-black line-clamp-1">الكل</span>
-              <span className={`text-[9px] font-bold ${selectedCategory === 'all' ? 'text-white/80' : 'text-stone-400'}`}>
+              <span className="text-xs font-black line-clamp-1">الكل</span>
+              <span className={`text-[10px] font-bold ${selectedCategory === 'all' ? 'text-white/80' : 'text-stone-400'}`}>
                 {products.length} منتج
               </span>
             </button>
@@ -298,20 +324,21 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
               const IconComp = getCategoryIconComponent(cat.icon);
               const count = products.filter((p) => p.category_id === cat.id).length;
               const isSelected = selectedCategory === cat.id;
+              const localImg = getCategoryLocalImage(cat.id, cat.image);
 
               return (
                 <button
                   key={cat.id}
                   onClick={() => handleCategorySelect(cat.id)}
-                  className={`group relative flex flex-col items-center p-2 rounded-2xl transition-all text-center border cursor-pointer ${
+                  className={`group relative flex flex-col items-center p-2.5 rounded-2xl transition-all text-center border cursor-pointer ${
                     isSelected
                       ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                      : 'bg-stone-50 hover:bg-rose-50/50 border-stone-200 text-stone-700'
+                      : 'bg-stone-50 hover:bg-rose-50/60 border-stone-200 text-stone-700'
                   }`}
                 >
                   {cat.badge && (
                     <span
-                      className={`absolute -top-1.5 right-0.5 text-[8px] font-extrabold px-1.5 py-0.2 rounded-full shadow-xs ${
+                      className={`absolute -top-1.5 right-1 text-[9px] font-extrabold px-2 py-0.5 rounded-full shadow-xs ${
                         isSelected ? 'bg-amber-400 text-stone-900' : 'bg-rose-100 text-rose-700'
                       }`}
                     >
@@ -319,26 +346,26 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
                     </span>
                   )}
                   <div
-                    className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center mb-1.5 transition-transform group-hover:scale-105 border ${
-                      isSelected ? 'border-white/40 bg-white/20' : 'border-stone-200 bg-white shadow-2xs'
+                    className={`w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center mb-2 transition-transform group-hover:scale-105 border shadow-xs ${
+                      isSelected ? 'border-white/40 bg-white/20' : 'border-stone-200 bg-white'
                     }`}
                   >
-                    {cat.image ? (
+                    {localImg ? (
                       <img
-                        src={cat.image}
+                        src={localImg}
                         alt={cat.name_ar}
                         className="w-full h-full object-cover"
                         loading="lazy"
                       />
                     ) : (
                       <IconComp
-                        className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-rose-600'}`}
+                        className={`w-6 h-6 ${isSelected ? 'text-white' : 'text-rose-600'}`}
                       />
                     )}
                   </div>
-                  <span className="text-[11px] font-black line-clamp-1">{cat.name_ar}</span>
+                  <span className="text-xs font-black line-clamp-1">{cat.name_ar}</span>
                   <span
-                    className={`text-[9px] font-bold ${
+                    className={`text-[10px] font-bold ${
                       isSelected ? 'text-white/80' : 'text-stone-400'
                     }`}
                   >

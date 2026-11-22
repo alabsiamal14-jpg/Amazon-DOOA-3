@@ -13,6 +13,41 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
   onAddressSelected,
   defaultCity = 'الرياض',
 }) => {
+  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+
+  if (!mapsApiKey) {
+    return (
+      <div className="space-y-2 text-xs border border-amber-200 p-3 rounded-2xl bg-amber-50 text-amber-900">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            تحديد الموقع عبر الخريطة غير متاح حالياً. يرجى إدخال تفاصيل عنوان التوصيل يدوياً أعلاه.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <APIProvider apiKey={mapsApiKey} language="ar" region="SA">
+      <CheckoutDeliveryMapInner
+        onAddressSelected={onAddressSelected}
+        defaultCity={defaultCity}
+        mapsApiKey={mapsApiKey}
+      />
+    </APIProvider>
+  );
+};
+
+interface CheckoutDeliveryMapInnerProps extends CheckoutDeliveryMapProps {
+  mapsApiKey: string;
+}
+
+const CheckoutDeliveryMapInner: React.FC<CheckoutDeliveryMapInnerProps> = ({
+  onAddressSelected,
+  defaultCity = 'الرياض',
+  mapsApiKey,
+}) => {
   const [markerPosition, setMarkerPosition] = useState({ lat: 24.7118, lng: 46.6744 }); // Riyadh center
   const [mapCenter, setMapCenter] = useState({ lat: 24.7118, lng: 46.6744 });
   const [mapZoom, setMapZoom] = useState(13);
@@ -22,8 +57,6 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
 
   const autocompleteInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
-
-  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
 
   // Reverse geocodes the coordinates to address via Geocoding REST API (CF5/Section 5 compliant)
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
@@ -171,21 +204,7 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
     }
   }, [defaultCity]);
 
-  if (!mapsApiKey) {
-    return (
-      <div className="space-y-2 text-xs border border-amber-200 p-3 rounded-2xl bg-amber-50 text-amber-900">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="leading-relaxed">
-            تحديد الموقع عبر الخريطة غير متاح حالياً. يرجى إدخال تفاصيل عنوان التوصيل يدوياً أعلاه.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <APIProvider apiKey={mapsApiKey} language="ar" region="SA">
       <div className="space-y-2 text-xs border border-stone-200 p-3 rounded-2xl bg-white shadow-2xs">
         <div className="flex items-center justify-between gap-2">
           <span className="font-bold text-stone-700 flex items-center gap-1">
@@ -263,6 +282,5 @@ export const CheckoutDeliveryMap: React.FC<CheckoutDeliveryMapProps> = ({
           </div>
         )}
       </div>
-    </APIProvider>
   );
 };
