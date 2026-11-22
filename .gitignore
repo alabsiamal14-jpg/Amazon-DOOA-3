@@ -31,8 +31,9 @@ playwright-report/
 .vite/
 
 # Backups & private local runtime data
-backups/
-data/
+/backups/
+/data/
+!src/data/
 
 # Legacy nested archive directory (prevent duplicate Next.js repo push to GitHub)
 Amazon-Duaa-v1/
