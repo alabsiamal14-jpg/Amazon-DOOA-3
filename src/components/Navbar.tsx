@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, Lock, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, LogIn, ChevronDown, Flame, MapPin, Bot } from 'lucide-react';
+import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, Lock, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, LogIn, ChevronDown, Flame, MapPin, Bot, Coins } from 'lucide-react';
 import { StoreSettings, AdminUser, Product, UserProfile } from '../types';
 import { env } from '../lib/env';
 import { SmartSearchBar } from './SmartSearchBar';
+import { formatCurrency, getActiveCurrencyCode, getEffectiveCurrencies } from '../lib/currency';
 
 interface NavbarProps {
   activeTab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant';
@@ -13,6 +14,7 @@ interface NavbarProps {
   wishlistCount: number;
   onOpenWishlist: () => void;
   settings: StoreSettings;
+  onChangeCurrency?: (currencyCode: string) => void;
   onOpenDocs: () => void;
   ordersCount: number;
   adminUser: AdminUser | null;
@@ -35,6 +37,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   wishlistCount,
   onOpenWishlist,
   settings,
+  onChangeCurrency,
   onOpenDocs,
   ordersCount,
   adminUser,
@@ -51,6 +54,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  const currenciesMap = getEffectiveCurrencies(settings);
+  const activeCurrencyCode = getActiveCurrencyCode(settings);
+  const activeCurrencies = Object.values(currenciesMap).filter((c) => c.active);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -90,7 +97,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         <div className="flex items-center gap-2 mx-auto sm:mx-0">
           <Sparkles className="w-3.5 h-3.5 text-rose-300 animate-pulse" />
-          <span>شحن مجاني لكافة الطلبات فوق {settings.freeDeliveryThreshold} {settings.currency}</span>
+          <span>شحن مجاني لكافة الطلبات فوق {formatCurrency(settings.freeDeliveryThreshold, activeCurrencyCode, settings)}</span>
         </div>
 
         <div className="hidden md:flex items-center gap-2 text-rose-300 text-[11px]">
@@ -167,6 +174,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Code className="w-3.5 h-3.5 text-rose-600" />
                 <span>أكواد النشر</span>
               </button>
+            )}
+
+            {/* Currency Selector */}
+            {onChangeCurrency && activeCurrencies.length > 1 && (
+              <div className="flex items-center gap-1 bg-stone-100 hover:bg-stone-200/80 border border-stone-200 rounded-xl sm:rounded-2xl px-2 py-1.5 sm:px-2.5 sm:py-2 transition-colors">
+                <Coins className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <select
+                  aria-label="اختيار العملة"
+                  value={activeCurrencyCode}
+                  onChange={(e) => onChangeCurrency(e.target.value)}
+                  className="bg-transparent text-[11px] sm:text-xs font-extrabold text-stone-800 focus:outline-hidden cursor-pointer max-w-[100px] sm:max-w-none"
+                >
+                  {activeCurrencies.map((cur) => (
+                    <option key={cur.code} value={cur.code}>
+                      {cur.name_ar || cur.symbol}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
 
             {/* Wishlist Trigger Button */}
@@ -323,7 +349,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="hidden sm:inline text-xs font-bold">السلة</span>
               {cartCount > 0 && (
                 <span className="hidden sm:inline text-[11px] sm:text-xs font-semibold text-rose-200 border-r border-stone-700 pr-2 mr-0.5">
-                  {cartTotal} {settings.currency}
+                  {formatCurrency(cartTotal, activeCurrencyCode, settings)}
                 </span>
               )}
             </button>
@@ -378,7 +404,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <CreditCard className="w-3.5 h-3.5" />
-              <span>الدفع ({cartTotal})</span>
+              <span>الدفع ({formatCurrency(cartTotal, activeCurrencyCode, settings)})</span>
             </button>
           )}
 

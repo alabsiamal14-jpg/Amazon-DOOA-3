@@ -419,6 +419,14 @@ export const AdminOrders: React.FC<AdminOrdersProps> = ({
                 <span>الإجمالي:</span>
                 <span className="text-rose-600">{selectedOrder.total_amount} {settings.currency}</span>
               </div>
+              {selectedOrder.currencyInfo && (
+                <div className="flex justify-between text-[11px] font-bold text-stone-600 pt-1 border-t border-rose-100/80">
+                  <span>عملة العميل وقت الطلب ({selectedOrder.currencyInfo.code}):</span>
+                  <span className="text-stone-900">
+                    {selectedOrder.currencyInfo.totalInSelectedCurrency.toLocaleString('en-US')} {selectedOrder.currencyInfo.symbol} (سعر الصرف: {selectedOrder.currencyInfo.rateAtCheckout})
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Purchase Instructions: Order breakdown by Supplier (RAG/Memory Mapping fallback) */}

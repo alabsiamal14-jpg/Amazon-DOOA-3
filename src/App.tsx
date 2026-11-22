@@ -48,6 +48,7 @@ import {
   saveStoredOrders,
   getStoredSettings,
   saveStoredSettings,
+  saveStoredActiveCurrency,
   getStoredCart,
   saveStoredCart,
   getStoredWishlist,
@@ -882,8 +883,21 @@ export const App: React.FC = () => {
     saveStoredSettings(newSettings);
   }, []);
 
+  const handleChangeCurrency = useCallback((currencyCode: string) => {
+    setSettings((prev) => {
+      const next: StoreSettings = {
+        ...prev,
+        activeCurrency: currencyCode,
+      };
+      saveStoredSettings(next);
+      return next;
+    });
+    saveStoredActiveCurrency(currencyCode);
+  }, []);
+
   const handleResetData = useCallback(() => {
     resetToDefaults();
+    saveStoredActiveCurrency('SAR');
     setProducts(INITIAL_PRODUCTS);
     setOrders([]);
     setSettings(INITIAL_SETTINGS);
@@ -977,6 +991,7 @@ export const App: React.FC = () => {
         wishlistCount={wishlist.length}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         settings={settings}
+        onChangeCurrency={handleChangeCurrency}
         onOpenDocs={() => setIsDocsOpen(true)}
         ordersCount={orders.length}
         adminUser={adminUser}
@@ -1036,6 +1051,7 @@ export const App: React.FC = () => {
               cartItems={cart}
               products={products}
               settings={settings}
+              onChangeCurrency={handleChangeCurrency}
               onUpdateQuantity={handleUpdateQuantity}
               onRemoveItem={handleRemoveCartItem}
               onOrderPlaced={handleOrderPlaced}

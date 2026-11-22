@@ -4,6 +4,7 @@ import { CartItem, CustomerOrderInfo, StoreSettings, Order } from '../types';
 import { buildWhatsAppMessage, generateWhatsAppOrderUrl } from '../lib/whatsapp';
 import { CheckoutDeliveryMap } from './CheckoutDeliveryMap';
 import { getProductPricing } from '../lib/pricing';
+import { formatCurrency, calculateTotals } from '../lib/currency';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -104,8 +105,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const handleWhatsAppCheckout = async () => {
     if (isSubmitting) return;
 
-    // Generate order number
     const orderNum = 'ELEN-' + Math.floor(1000 + Math.random() * 9000);
+    const currencyTotals = calculateTotals(
+      cartItems.map((ci) => ({
+        price: getProductPricing(ci.product).finalPrice,
+        quantity: ci.quantity,
+      })),
+      deliveryFee,
+      settings.activeCurrency,
+      settings,
+      couponDiscount
+    );
 
     const newOrder: Order = {
       id: 'order-' + Date.now(),
@@ -128,6 +138,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       coupon_code: appliedCouponCode,
       delivery_fee: deliveryFee,
       total_amount: grandTotal,
+      currencyInfo: {
+        code: currencyTotals.currencyCode,
+        symbol: currencyTotals.symbol,
+        rateAtCheckout: currencyTotals.rateApplied,
+        subtotalInSelectedCurrency: currencyTotals.subtotal,
+        totalInSelectedCurrency: currencyTotals.total,
+      },
       status: 'pending',
       whatsapp_sent: true,
       created_at: new Date().toISOString(),
@@ -216,7 +233,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="flex items-center justify-between text-xs mb-1.5 font-medium">
               {remainingForFree > 0 ? (
                 <span className="text-stone-700">
-                  أضف بـ <strong className="text-rose-600">{remainingForFree} {settings.currency}</strong> إضافية للشحن المجاني! 🚚
+                  أضف بـ <strong className="text-rose-600">{formatCurrency(remainingForFree, settings.activeCurrency, settings)}</strong> إضافية للشحن المجاني! 🚚
                 </span>
               ) : (
                 <span className="text-emerald-700 font-bold flex items-center gap-1">
@@ -313,7 +330,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
                         {/* Price */}
                         <div className="text-left font-black text-rose-600 text-sm">
-                          {itemTotal} {settings.currency}
+                          {formatCurrency(itemTotal, settings.activeCurrency, settings)}
                         </div>
                       </div>
                     </div>
@@ -468,12 +485,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="space-y-1.5 text-xs text-stone-600">
               <div className="flex justify-between">
                 <span>المجموع الفرعي:</span>
-                <span className="font-semibold text-stone-800">{subtotal} {settings.currency}</span>
+                <span className="font-semibold text-stone-800">{formatCurrency(subtotal, settings.activeCurrency, settings)}</span>
               </div>
               {couponDiscount > 0 && (
                 <div className="flex justify-between text-emerald-600 font-medium">
                   <span>الخصم المطبق:</span>
-                  <span>-{couponDiscount} {settings.currency}</span>
+                  <span>-{formatCurrency(couponDiscount, settings.activeCurrency, settings)}</span>
                 </div>
               )}
               <div className="flex justify-between">
@@ -482,14 +499,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   {deliveryFee === 0 ? (
                     <span className="text-emerald-600 font-bold">مجاني 🎉</span>
                   ) : (
-                    <span>{deliveryFee} {settings.currency}</span>
+                    <span>{formatCurrency(deliveryFee, settings.activeCurrency, settings)}</span>
                   )}
                 </span>
               </div>
               <div className="flex justify-between text-sm sm:text-base font-black text-stone-900 pt-2 border-t border-stone-200">
                 <span>المجموع الكلي:</span>
                 <span className="text-rose-600 font-black text-lg">
-                  {grandTotal} {settings.currency}
+                  {formatCurrency(grandTotal, settings.activeCurrency, settings)}
                 </span>
               </div>
             </div>
@@ -505,7 +522,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   className="w-full bg-stone-900 hover:bg-stone-800 text-white py-3.5 px-4 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <CreditCard className="w-4 h-4 text-rose-300" />
-                  <span>متابعة الشراء والدفع الآمن ({grandTotal} {settings.currency})</span>
+                  <span>متابعة الشراء والدفع الآمن ({formatCurrency(grandTotal, settings.activeCurrency, settings)})</span>
                 </button>
               )}
 

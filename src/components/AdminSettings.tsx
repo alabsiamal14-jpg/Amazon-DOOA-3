@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Settings, Save, Check, Phone, DollarSign, Truck, RotateCcw } from 'lucide-react';
-import { StoreSettings } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Settings, Save, Check, Phone, DollarSign, Truck, RotateCcw, Coins } from 'lucide-react';
+import { CurrencyConfig, StoreSettings } from '../types';
+import { getEffectiveCurrencies } from '../lib/currency';
 
 interface AdminSettingsProps {
   settings: StoreSettings;
@@ -15,14 +16,48 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
   onResetData,
   onUpdateUserRole,
 }) => {
-  const [formData, setFormData] = useState<StoreSettings>(settings);
+  const [formData, setFormData] = useState<StoreSettings>(() => ({
+    ...settings,
+    currencies: getEffectiveCurrencies(settings),
+    activeCurrency: settings.activeCurrency || 'SAR',
+  }));
   const [saved, setSaved] = useState(false);
   const [staffEmail, setStaffEmail] = useState('');
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
 
+  useEffect(() => {
+    setFormData({
+      ...settings,
+      currencies: getEffectiveCurrencies(settings),
+      activeCurrency: settings.activeCurrency || 'SAR',
+    });
+  }, [settings]);
+
+  const currenciesMap = getEffectiveCurrencies(formData);
+
+  const handleCurrencyChange = (code: string, patch: Partial<CurrencyConfig>) => {
+    setFormData((prev) => {
+      const current = getEffectiveCurrencies(prev);
+      return {
+        ...prev,
+        currencies: {
+          ...current,
+          [code]: {
+            ...current[code],
+            ...patch,
+          },
+        },
+      };
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveSettings(formData);
+    onSaveSettings({
+      ...formData,
+      currencies: getEffectiveCurrencies(formData),
+      activeCurrency: formData.activeCurrency || 'SAR',
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -130,6 +165,110 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
               onChange={(e) => setFormData({ ...formData, freeDeliveryThreshold: Number(e.target.value) })}
               className="w-full p-3 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden"
             />
+          </div>
+        </div>
+
+        {/* Multi-Currency Exchange Rates Management */}
+        <div className="pt-6 border-t border-stone-100 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm sm:text-base font-black text-stone-900 flex items-center gap-2">
+                <Coins className="w-4 h-4 text-rose-600" />
+                <span>إدارة العملات وأسعار الصرف (السوق اليمني والخليجي)</span>
+              </h4>
+              <p className="text-[11px] text-stone-500 mt-0.5">
+                أسعار المنتجات الأساسية محفوظة بالريال السعودي (SAR = 1)، ويتم تحويل الأسعار تلقائياً للعملاء حسب سعر الصرف هنا.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-stone-700 shrink-0">العملة الافتراضية:</label>
+              <select
+                value={formData.activeCurrency || 'SAR'}
+                onChange={(e) => setFormData({ ...formData, activeCurrency: e.target.value })}
+                className="p-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-bold focus:border-rose-500 focus:outline-hidden"
+              >
+                {Object.values(currenciesMap)
+                  .filter((c) => c.active)
+                  .map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name_ar || c.code}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.values(currenciesMap).map((cur) => (
+              <div
+                key={cur.code}
+                className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                  cur.active ? 'bg-stone-50/70 border-stone-200' : 'bg-stone-100/50 border-stone-200/60 opacity-65'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-black text-stone-900 text-xs sm:text-sm block">
+                      {cur.name_ar || cur.code}
+                    </span>
+                    <span className="text-[10px] font-mono text-stone-400">{cur.code}</span>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-stone-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={cur.active}
+                      disabled={cur.code === 'SAR'}
+                      onChange={(e) => handleCurrencyChange(cur.code, { active: e.target.checked })}
+                      className="rounded text-rose-600 focus:ring-rose-500"
+                    />
+                    <span>مفعل</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-600 mb-1">سعر الصرف (× SAR)</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      min="0.0001"
+                      disabled={cur.code === 'SAR'}
+                      value={cur.rate}
+                      onChange={(e) =>
+                        handleCurrencyChange(cur.code, {
+                          rate: Math.max(0.0001, Number(e.target.value) || 1),
+                        })
+                      }
+                      className="w-full p-2 bg-white border border-stone-200 rounded-xl font-mono text-xs focus:border-rose-500 focus:outline-hidden disabled:bg-stone-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-600 mb-1">الرمز المعروض</label>
+                    <input
+                      type="text"
+                      value={cur.symbol}
+                      onChange={(e) => handleCurrencyChange(cur.code, { symbol: e.target.value })}
+                      className="w-full p-2 bg-white border border-stone-200 rounded-xl text-xs focus:border-rose-500 focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-600 mb-1">الكسور العشرية</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="4"
+                      value={cur.decimals}
+                      onChange={(e) =>
+                        handleCurrencyChange(cur.code, {
+                          decimals: Math.max(0, Math.min(4, Math.floor(Number(e.target.value) || 0))),
+                        })
+                      }
+                      className="w-full p-2 bg-white border border-stone-200 rounded-xl font-mono text-xs focus:border-rose-500 focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

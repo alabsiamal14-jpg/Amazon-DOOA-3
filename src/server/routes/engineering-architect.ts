@@ -285,9 +285,9 @@ ${uninspectedNotes.join('\n')}`;
                 contents: promptText,
                 config: {
                   abortSignal: signal,
-                  maxOutputTokens: 1400,
+                  maxOutputTokens: 2048,
                   ...(model === 'gemini-4-hydrogen'
-                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
                     : {}),
                   responseMimeType: 'application/json',
                   responseSchema: {

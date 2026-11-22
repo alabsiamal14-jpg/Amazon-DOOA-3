@@ -57,6 +57,16 @@ export interface CartItem {
   quantity: number;
 }
 
+export interface CurrencyConfig {
+  code: string;
+  name_ar?: string;
+  symbol: string;
+  rate: number; // معامل التحويل مقابل عملة الأساس (SAR = 1)
+  decimals: number;
+  badgeColor?: string;
+  active: boolean;
+}
+
 export interface StoreSettings {
   storeName: string;
   tagline: string;
@@ -65,6 +75,16 @@ export interface StoreSettings {
   deliveryFee: number;
   freeDeliveryThreshold: number;
   welcomeMessage: string;
+  currencies?: Record<string, CurrencyConfig>;
+  activeCurrency?: string;
+}
+
+export interface OrderCurrencyInfo {
+  code: string;
+  symbol: string;
+  rateAtCheckout: number;
+  subtotalInSelectedCurrency: number;
+  totalInSelectedCurrency: number;
 }
 
 export interface CustomerOrderInfo {
@@ -105,6 +125,7 @@ export interface Order {
   coupon_code?: string;
   delivery_fee: number;
   total_amount: number;
+  currencyInfo?: OrderCurrencyInfo;
   status: OrderStatus;
   whatsapp_sent: boolean;
   payment_method?: string;

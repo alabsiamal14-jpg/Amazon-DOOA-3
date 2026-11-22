@@ -3,6 +3,7 @@ import { X, ShoppingBag, MessageCircle } from 'lucide-react';
 import { Product, StoreSettings } from '../types';
 import { generateSingleProductWhatsAppUrl } from '../lib/whatsapp';
 import { getProductPricing } from '../lib/pricing';
+import { formatCurrency } from '../lib/currency';
 
 interface QuickViewModalProps {
   product: Product;
@@ -61,11 +62,11 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
             {pricing.finalPrice > 0 ? (
               <>
                 <span className="text-2xl font-black text-rose-600">
-                  {pricing.finalPrice} {settings.currency}
+                  {formatCurrency(pricing.finalPrice, settings.activeCurrency, settings)}
                 </span>
                 {pricing.hasDiscount && (
                   <span className="text-sm text-stone-400 line-through">
-                    {pricing.originalPrice} {settings.currency}
+                    {formatCurrency(pricing.originalPrice, settings.activeCurrency, settings)}
                   </span>
                 )}
                 {pricing.hasDiscount && (

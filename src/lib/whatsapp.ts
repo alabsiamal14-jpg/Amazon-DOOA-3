@@ -1,5 +1,6 @@
 import { CartItem, CustomerOrderInfo, StoreSettings, Order } from '../types';
 import { getProductPricing } from './pricing';
+import { formatCurrency, resolveCurrencyConfig } from './currency';
 
 export function formatPhoneNumber(phone: string): string {
   let cleaned = phone.replace(/\D/g, '');
@@ -19,7 +20,8 @@ export function buildWhatsAppMessage(
   couponCode?: string,
   orderNumber?: string
 ): string {
-  const currency = settings.currency || 'ريال';
+  const activeCurrencyCfg = resolveCurrencyConfig(settings.activeCurrency, settings);
+  const fmt = (val: number) => formatCurrency(val, activeCurrencyCfg.code, settings);
   const subtotal = cartItems.reduce((acc, item) => {
     const price = getProductPricing(item.product).finalPrice;
     return acc + price * item.quantity;
@@ -56,25 +58,29 @@ export function buildWhatsAppMessage(
     const itemTotal = unitPrice * item.quantity;
     lines.push(
       `${index + 1}. *${item.product.title_ar}*\n` +
-      `   الكمية: ${item.quantity} × ${unitPrice} ${currency} = ${itemTotal} ${currency}`
+      `   الكمية: ${item.quantity} × ${fmt(unitPrice)} = ${fmt(itemTotal)}`
     );
   });
 
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
   lines.push(`💰 *ملخص الحساب:*`);
-  lines.push(`• المجموع الفرعي: ${subtotal} ${currency}`);
+  lines.push(`• العملة المختارة: ${activeCurrencyCfg.name_ar || activeCurrencyCfg.symbol} (${activeCurrencyCfg.code})`);
+  lines.push(`• المجموع الفرعي: ${fmt(subtotal)}`);
 
   if (discountAmount > 0) {
-    lines.push(`• الخصم ${couponCode ? `(كوبون: ${couponCode})` : ''}: -${discountAmount} ${currency}`);
+    lines.push(`• الخصم ${couponCode ? `(كوبون: ${couponCode})` : ''}: -${fmt(discountAmount)}`);
   }
 
   if (deliveryFee === 0) {
     lines.push(`• التوصيل: مجاني (عرض الشحن المجاني) 🎉`);
   } else {
-    lines.push(`• رسوم التوصيل: ${deliveryFee} ${currency}`);
+    lines.push(`• رسوم التوصيل: ${fmt(deliveryFee)}`);
   }
 
-  lines.push(`\n✨ *الإجمالي النهائي: ${finalTotal} ${currency}*`);
+  lines.push(`\n✨ *الإجمالي النهائي: ${fmt(finalTotal)}*`);
+  if (activeCurrencyCfg.code !== 'SAR') {
+    lines.push(`_(المرجع الأساسي: ${finalTotal} ${settings.currency || 'ريال'} • سعر الصرف المطبق: ${activeCurrencyCfg.rate})_`);
+  }
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
   lines.push(`يرجى تأكيد استلام الطلب وتزويدي برقم الحساب أو خيارات الدفع المتاحة. شكراً لكم! 🌸`);
   lines.push(`⚠️ *إشعار أمني:* هذه الرسالة للتنسيق وتأكيد تفاصيل الطلب مع المتجر، ولا تُعد وحدها إيصال دفع أو تأكيداً نهائياً للدفع حتى مراجعة الإدارة.`);
@@ -158,13 +164,12 @@ export function generateSingleProductWhatsAppUrl(
   settings: StoreSettings
 ): string {
   const phone = formatPhoneNumber(settings.whatsappNumber);
-  const currency = settings.currency || 'ريال';
   const price = getProductPricing(product).finalPrice;
 
   const message = `
 مرحباً، أود الاستفسار وطلب هذا المنتج من *${settings.storeName}*:
 ✨ *${product.title_ar}*
-💰 السعر: ${price > 0 ? `${price} ${currency}` : 'حسب الطلب'}
+💰 السعر: ${price > 0 ? formatCurrency(price, settings.activeCurrency, settings) : 'حسب الطلب'}
 
 هل المنتج متوفر حالياً للتوصيل؟
   `.trim();

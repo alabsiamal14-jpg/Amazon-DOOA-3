@@ -26,6 +26,7 @@ import { Product, StoreSettings, ProductReview } from '../types';
 import { generateSingleProductWhatsAppUrl } from '../lib/whatsapp';
 import { StarRatingDisplay, StarRatingInput } from './StarRating';
 import { getProductPricing } from '../lib/pricing';
+import { formatCurrency } from '../lib/currency';
 
 interface ProductDetailsPageProps {
   product: Product;
@@ -439,7 +440,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               {activeTab === 'shipping' && (
                 <div className="space-y-1.5">
                   <p>• شحن سريع ومبرد إلى كافة مدن المملكة ودول الخليج خلال 2 إلى 4 أيام عمل.</p>
-                  <p>• شحن مجاني للطلبات فوق {settings.freeDeliveryThreshold} {settings.currency}.</p>
+                  <p>• شحن مجاني للطلبات فوق {formatCurrency(settings.freeDeliveryThreshold, settings.activeCurrency, settings)}.</p>
                   <p>• تغليف فاخر مع عينات مجانية مرفقة مع كل طلب.</p>
                 </div>
               )}
@@ -458,18 +459,18 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   <span className="text-[11px] font-bold text-stone-400 block mb-1">السعر الإجمالي:</span>
                   <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-black text-rose-600">
-                      {currentPrice} {settings.currency}
+                      {formatCurrency(currentPrice, settings.activeCurrency, settings)}
                     </span>
                     {hasDiscount && (
                       <span className="text-sm text-stone-400 line-through">
-                        {product.original_price} {settings.currency}
+                        {formatCurrency(product.original_price, settings.activeCurrency, settings)}
                       </span>
                     )}
                   </div>
 
                   {hasDiscount && (
                     <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg mt-1 inline-block">
-                      وفرتِ: {discountAmount} {settings.currency} ({discountPercent}%)
+                      وفرتِ: {formatCurrency(discountAmount, settings.activeCurrency, settings)} ({discountPercent}%)
                     </div>
                   )}
                   <span className="text-[10px] text-stone-400 block mt-1">الأسعار شاملة ضريبة القيمة المضافة</span>
@@ -547,7 +548,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 <ShoppingBag className="w-4 h-4 text-rose-300" />
                 <span>
                   {currentPrice > 0
-                    ? `أضف إلى سلة المشتريات (${currentPrice * quantity} ${settings.currency})`
+                    ? `أضف إلى سلة المشتريات (${formatCurrency(currentPrice * quantity, settings.activeCurrency, settings)})`
                     : 'أضف إلى سلة المشتريات'}
                 </span>
               </button>
@@ -607,7 +608,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 <div className="text-xs">
                   <span className="text-rose-300 font-bold text-[10px] block">المنتج الحالي</span>
                   <div className="font-bold line-clamp-1">{product.title_ar}</div>
-                  <div className="text-rose-300 font-black">{currentPrice} {settings.currency}</div>
+                  <div className="text-rose-300 font-black">{formatCurrency(currentPrice, settings.activeCurrency, settings)}</div>
                 </div>
               </div>
 
@@ -628,7 +629,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                     <div className="text-xs">
                       <span className="text-amber-300 font-bold text-[10px] block">منتج مكمل موصى به</span>
                       <div className="font-bold line-clamp-1">{cp.title_ar}</div>
-                      <div className="text-rose-300 font-black">{cpPrice} {settings.currency}</div>
+                      <div className="text-rose-300 font-black">{formatCurrency(cpPrice, settings.activeCurrency, settings)}</div>
                     </div>
                   </div>
                 );

@@ -3,9 +3,29 @@ import { INITIAL_PRODUCTS, INITIAL_SETTINGS } from '../data/initialData';
 
 const PRODUCTS_KEY = 'elen_beauty_products_v1';
 const SETTINGS_KEY = 'elen_beauty_settings_v1';
+const ACTIVE_CURRENCY_KEY = 'amazon_duaa_active_currency_v1';
 const CART_KEY = 'elen_beauty_cart_v1';
 const WISHLIST_KEY = 'amazon_duaa_wishlist_v1';
 const ORDERS_KEY = 'elen_beauty_orders_v1';
+
+export function getStoredActiveCurrency(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(ACTIVE_CURRENCY_KEY);
+    return raw && raw.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredActiveCurrency(currencyCode: string): void {
+  try {
+    if (typeof localStorage === 'undefined' || !currencyCode) return;
+    localStorage.setItem(ACTIVE_CURRENCY_KEY, currencyCode.trim());
+  } catch (e) {
+    console.error('Error saving active currency to storage:', e);
+  }
+}
 
 export function getStoredWishlist(): string[] {
   try {
@@ -116,8 +136,13 @@ export function removeStoredProduct(productId: string): void {
 
 export function getStoredSettings(): StoreSettings {
   try {
+    const storedActiveCurrency = getStoredActiveCurrency();
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return INITIAL_SETTINGS;
+    if (!raw) {
+      return storedActiveCurrency && INITIAL_SETTINGS.currencies?.[storedActiveCurrency]?.active
+        ? { ...INITIAL_SETTINGS, activeCurrency: storedActiveCurrency }
+        : INITIAL_SETTINGS;
+    }
     const parsed = JSON.parse(raw);
     delete parsed.adminPassword; // Purge legacy plaintext password
     if (parsed.whatsappNumber === '966500000000' || parsed.storeName?.includes('إيلين')) {
@@ -126,7 +151,18 @@ export function getStoredSettings(): StoreSettings {
       parsed.tagline = INITIAL_SETTINGS.tagline;
       localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...INITIAL_SETTINGS, ...parsed }));
     }
-    return { ...INITIAL_SETTINGS, ...parsed };
+    const mergedCurrencies = {
+      ...(INITIAL_SETTINGS.currencies || {}),
+      ...(parsed.currencies && typeof parsed.currencies === 'object' ? parsed.currencies : {}),
+    };
+    const preferredCode = storedActiveCurrency || parsed.activeCurrency || INITIAL_SETTINGS.activeCurrency || 'SAR';
+    const activeCurrency = mergedCurrencies[preferredCode]?.active ? preferredCode : 'SAR';
+    return {
+      ...INITIAL_SETTINGS,
+      ...parsed,
+      currencies: mergedCurrencies,
+      activeCurrency,
+    };
   } catch (e) {
     console.error('Error loading settings from storage:', e);
     return INITIAL_SETTINGS;
@@ -136,6 +172,9 @@ export function getStoredSettings(): StoreSettings {
 export function saveStoredSettings(settings: StoreSettings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    if (settings.activeCurrency) {
+      saveStoredActiveCurrency(settings.activeCurrency);
+    }
   } catch (e) {
     console.error('Error saving settings to storage:', e);
   }

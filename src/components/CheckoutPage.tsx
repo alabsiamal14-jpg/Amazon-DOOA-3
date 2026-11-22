@@ -32,11 +32,19 @@ import { getAuthHeadersAsync } from '../lib/storage';
 import { MatchedVideoOrderItem } from '../types/videoOrder.ts';
 import { generateWhatsAppOrderUrl } from '../lib/whatsapp';
 import { getProductPricing } from '../lib/pricing';
+import {
+  formatCurrency,
+  calculateTotals,
+  getEffectiveCurrencies,
+  getActiveCurrencyCode,
+  getSuggestedCurrencyForCity,
+} from '../lib/currency';
 
 interface CheckoutPageProps {
   cartItems: CartItem[];
   products: Product[];
   settings: StoreSettings;
+  onChangeCurrency?: (currencyCode: string) => void;
   onUpdateQuantity: (productId: string, delta: number) => void;
   onRemoveItem: (productId: string) => void;
   onOrderPlaced: (order: Order) => void | Promise<any>;
@@ -60,12 +68,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   cartItems,
   products,
   settings,
+  onChangeCurrency,
   onUpdateQuantity,
   onRemoveItem,
   onOrderPlaced,
   onBackToStore,
 }) => {
   const [checkoutMode, setCheckoutMode] = useState<'traditional' | 'video'>('traditional');
+  const activeCurrencyCode = getActiveCurrencyCode(settings);
+  const currenciesMap = getEffectiveCurrencies(settings);
+  const activeCurrencies = Object.values(currenciesMap).filter((c) => c.active);
 
   // Local Toast System (Replaces alert() to match design system)
   const [localToast, setLocalToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -104,6 +116,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const expressExtraFee = customerInfo.deliverySpeed === 'express' ? 15 : 0;
   const traditionalDeliveryFee = standardFee + expressExtraFee;
   const traditionalGrandTotal = Math.max(0, traditionalSubtotal - couponDiscount + traditionalDeliveryFee);
+  const finalTotals = calculateTotals(
+    cartItems.map((ci) => ({
+      price: getProductPricing(ci.product).finalPrice,
+      quantity: ci.quantity,
+    })),
+    traditionalDeliveryFee,
+    activeCurrencyCode,
+    settings,
+    couponDiscount
+  );
 
   // --- VIDEO-TO-ORDER STATE ---
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -288,6 +310,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         coupon_code: cleanCouponCode,
         delivery_fee: traditionalDeliveryFee,
         total_amount: traditionalGrandTotal,
+        currencyInfo: {
+          code: finalTotals.currencyCode,
+          symbol: finalTotals.symbol,
+          rateAtCheckout: finalTotals.rateApplied,
+          subtotalInSelectedCurrency: finalTotals.subtotal,
+          totalInSelectedCurrency: finalTotals.total,
+        },
         status: 'pending',
         whatsapp_sent: true,
         payment_method: customerInfo.paymentMethod === 'cod' ? 'الدفع عند الاستلام' : 'تحويل بنكي فوري',
@@ -676,7 +705,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
           <div className="flex items-center justify-between pb-3 border-b border-stone-100">
             <span className="text-stone-500">الإجمالي النهائي المطلوب:</span>
-            <span className="font-black text-rose-600 text-base">{traditionalGrandTotal} {settings.currency}</span>
+            <span className="font-black text-rose-600 text-base">
+              {formatCurrency(traditionalGrandTotal, traditionalConfirmedOrder.currencyInfo?.code || activeCurrencyCode, settings)}
+            </span>
           </div>
         </div>
 
@@ -859,7 +890,23 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <label className="block font-bold text-stone-700 mb-1.5">المحافظة / المدينة *</label>
                   <select
                     value={customerInfo.city}
-                    onChange={(e) => setCustomerInfo({ ...customerInfo, city: e.target.value })}
+                    onChange={(e) => {
+                      const nextCity = e.target.value;
+                      setCustomerInfo({ ...customerInfo, city: nextCity });
+                      const suggested = getSuggestedCurrencyForCity(nextCity);
+                      if (
+                        suggested &&
+                        suggested !== activeCurrencyCode &&
+                        currenciesMap[suggested]?.active &&
+                        onChangeCurrency
+                      ) {
+                        onChangeCurrency(suggested);
+                        showToast(
+                          `تم تحويل العملة تلقائياً إلى ${currenciesMap[suggested].name_ar || currenciesMap[suggested].symbol} لمدينة ${nextCity}`,
+                          'info'
+                        );
+                      }
+                    }}
                     className="w-full text-xs p-3 bg-stone-50 border border-stone-200 rounded-2xl focus:bg-white focus:border-rose-500 focus:outline-hidden"
                   >
                     <option value="الرياض">الرياض</option>
@@ -883,6 +930,32 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   />
                 </div>
               </div>
+
+              {onChangeCurrency && activeCurrencies.length > 1 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-stone-50 border border-stone-200/80 rounded-2xl p-3 text-xs">
+                  <div className="text-stone-600 font-semibold">
+                    العملة المعتمدة للفاتورة:{' '}
+                    <span className="font-black text-rose-700">
+                      {currenciesMap[activeCurrencyCode]?.name_ar || activeCurrencyCode}
+                    </span>
+                    <span className="text-[11px] text-stone-400 mr-1.5">
+                      (سعر الصرف: {currenciesMap[activeCurrencyCode]?.rate})
+                    </span>
+                  </div>
+                  <select
+                    aria-label="تغيير عملة الدفع"
+                    value={activeCurrencyCode}
+                    onChange={(e) => onChangeCurrency(e.target.value)}
+                    className="bg-white border border-stone-200 rounded-xl px-3 py-1.5 text-xs font-bold text-stone-800 focus:border-rose-500 focus:outline-hidden cursor-pointer"
+                  >
+                    {activeCurrencies.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name_ar || c.symbol} ({c.symbol})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1.5">ملاحظات التوصيل (مثل: وقت التسليم المفضل، تغليف كهدية...)</label>
@@ -925,7 +998,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     <span className="font-bold text-stone-900 block mb-0.5">توصيل قياسي مبرد 🚛</span>
                     <span className="text-stone-500 block mb-1">تصل خلال 2-4 أيام عمل مع الحفاظ على الفعالية</span>
                     <span className="font-bold text-emerald-600">
-                      {standardFee === 0 ? 'شحن مجاني 🎉' : `${standardFee} ${settings.currency}`}
+                      {standardFee === 0 ? 'شحن مجاني 🎉' : formatCurrency(standardFee, activeCurrencyCode, settings)}
                     </span>
                   </div>
                 </label>
@@ -949,7 +1022,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     <span className="font-bold text-stone-900 block mb-0.5">توصيل إكسبرس سريع ⚡</span>
                     <span className="text-stone-500 block mb-1">خلال 24-48 ساعة أولوية قصوى</span>
                     <span className="font-bold text-rose-600">
-                      +{expressExtraFee} {settings.currency} إضافية
+                      +{formatCurrency(15, activeCurrencyCode, settings)} إضافية
                     </span>
                   </div>
                 </label>
@@ -1046,7 +1119,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                             {item.product.title_ar}
                           </h4>
                           <span className="text-[11px] text-stone-400">
-                            {unitPrice} {settings.currency} × {item.quantity}
+                            {formatCurrency(unitPrice, activeCurrencyCode, settings)} × {item.quantity}
                           </span>
                         </div>
                       </div>
@@ -1071,7 +1144,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         </div>
 
                         <div className="text-xs font-black text-stone-900 min-w-16 text-left">
-                          {unitPrice * item.quantity} {settings.currency}
+                          {formatCurrency(unitPrice * item.quantity, activeCurrencyCode, settings)}
                         </div>
                       </div>
                     </div>
@@ -1118,13 +1191,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               <div className="space-y-2 text-xs text-stone-600 pt-2 border-t border-stone-100">
                 <div className="flex justify-between">
                   <span>المجموع الفرعي:</span>
-                  <span className="font-bold text-stone-900">{traditionalSubtotal} {settings.currency}</span>
+                  <span className="font-bold text-stone-900">{formatCurrency(traditionalSubtotal, activeCurrencyCode, settings)}</span>
                 </div>
 
                 {couponDiscount > 0 && (
                   <div className="flex justify-between text-emerald-600 font-bold">
                     <span>الخصم المطبق:</span>
-                    <span>-{couponDiscount} {settings.currency}</span>
+                    <span>-{formatCurrency(couponDiscount, activeCurrencyCode, settings)}</span>
                   </div>
                 )}
 
@@ -1134,7 +1207,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     {traditionalDeliveryFee === 0 ? (
                       <span className="text-emerald-600 font-bold">مجاني 🎉</span>
                     ) : (
-                      <span className="font-bold text-stone-900">{traditionalDeliveryFee} {settings.currency}</span>
+                      <span className="font-bold text-stone-900">{formatCurrency(traditionalDeliveryFee, activeCurrencyCode, settings)}</span>
                     )}
                   </span>
                 </div>
@@ -1142,7 +1215,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 <div className="flex justify-between text-base font-black text-stone-900 pt-3 border-t border-stone-200">
                   <span>الإجمالي النهائي للدفع:</span>
                   <span className="text-rose-600 text-xl font-black">
-                    {traditionalGrandTotal} {settings.currency}
+                    {formatCurrency(traditionalGrandTotal, activeCurrencyCode, settings)}
                   </span>
                 </div>
               </div>
@@ -1161,7 +1234,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 ) : (
                   <>
                     <MessageCircle className="w-5 h-5" />
-                    <span>تأكيد الطلب وإرسال عبر واتساب ({traditionalGrandTotal} {settings.currency})</span>
+                    <span>تأكيد الطلب وإرسال عبر واتساب ({formatCurrency(traditionalGrandTotal, activeCurrencyCode, settings)})</span>
                   </>
                 )}
               </button>

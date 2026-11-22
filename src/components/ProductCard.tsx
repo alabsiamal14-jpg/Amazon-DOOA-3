@@ -4,6 +4,7 @@ import { Product, StoreSettings } from '../types';
 import { generateSingleProductWhatsAppUrl } from '../lib/whatsapp';
 import { StarRatingDisplay } from './StarRating';
 import { getProductPricing } from '../lib/pricing';
+import { formatCurrency } from '../lib/currency';
 
 interface ProductCardProps {
   product: Product;
@@ -199,11 +200,11 @@ const ProductCardComponent: React.FC<ProductCardProps> = ({
             {currentPrice > 0 ? (
               <>
                 <span className="text-xl sm:text-2xl font-black text-rose-600">
-                  {currentPrice} {settings.currency}
+                  {formatCurrency(currentPrice, settings.activeCurrency, settings)}
                 </span>
                 {hasDiscount && (
                   <span className="text-xs text-stone-400 line-through">
-                    {product.original_price} {settings.currency}
+                    {formatCurrency(product.original_price, settings.activeCurrency, settings)}
                   </span>
                 )}
               </>

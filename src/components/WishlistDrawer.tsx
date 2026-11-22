@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Heart, ShoppingBag, Trash2, ArrowRight, Sparkles, Check } from 'lucide-react';
 import { Product, StoreSettings } from '../types';
+import { formatCurrency } from '../lib/currency';
 
 interface WishlistDrawerProps {
   isOpen: boolean;
@@ -134,11 +135,11 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
 
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs font-black text-rose-600">
-                            {currentPrice} {settings.currency}
+                            {formatCurrency(currentPrice, settings.activeCurrency, settings)}
                           </span>
                           {product.discount_price && (
                             <span className="text-[10px] text-stone-400 line-through">
-                              {product.original_price} {settings.currency}
+                              {formatCurrency(product.original_price, settings.activeCurrency, settings)}
                             </span>
                           )}
                         </div>
