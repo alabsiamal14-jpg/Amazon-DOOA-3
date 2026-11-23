@@ -224,6 +224,129 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "employee_code", "title_ar", "status", "pricing_status_label", "created_at"]
+    },
+    "AccountingProduct": {
+      "title": "AccountingProduct",
+      "description": "Accounting inventory batch with landed cost in SAR",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 250 },
+        "vendorCode": { "type": "string", "maxLength": 80 },
+        "qty": { "type": "number" },
+        "buyPriceSar": { "type": "number" },
+        "shippingTotalSar": { "type": "number" },
+        "landedCostSar": { "type": "number" },
+        "sellPriceSar": { "type": "number" },
+        "purchaseMode": { "type": "string", "enum": ["cash", "credit"] },
+        "paymentChannel": { "type": "string", "maxLength": 60 },
+        "supplierCode": { "type": "string", "maxLength": 80 },
+        "referenceId": { "type": "string", "maxLength": 80 },
+        "storeProductId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "vendorCode", "qty", "landedCostSar", "sellPriceSar", "createdAt"]
+    },
+    "AccountingSale": {
+      "title": "AccountingSale",
+      "description": "Recorded accounting sale linked to store order or manual invoice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "txNumber": { "type": "string", "maxLength": 64 },
+        "referenceId": { "type": "string", "maxLength": 100 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 250 },
+        "vendorCode": { "type": "string", "maxLength": 80 },
+        "qty": { "type": "number" },
+        "unitPriceSar": { "type": "number" },
+        "unitCostSar": { "type": "number" },
+        "feesSar": { "type": "number" },
+        "status": { "type": "string", "enum": ["completed", "returned"] },
+        "paymentChannel": { "type": "string", "maxLength": 60 },
+        "sourceParty": { "type": "string", "maxLength": 200 },
+        "date": { "type": "string", "format": "date" },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referenceId", "productName", "qty", "unitPriceSar", "status", "date", "createdAt"]
+    },
+    "AccountingExpense": {
+      "title": "AccountingExpense",
+      "description": "Operating or advertising expense entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "txNumber": { "type": "string", "maxLength": 64 },
+        "referenceId": { "type": "string", "maxLength": 100 },
+        "title": { "type": "string", "maxLength": 250 },
+        "category": { "type": "string", "maxLength": 100 },
+        "amountSar": { "type": "number" },
+        "paymentChannel": { "type": "string", "maxLength": 60 },
+        "sourceParty": { "type": "string", "maxLength": 200 },
+        "date": { "type": "string", "format": "date" },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referenceId", "title", "category", "amountSar", "date", "createdAt"]
+    },
+    "AccountingSupplierTx": {
+      "title": "AccountingSupplierTx",
+      "description": "Supplier payable or cash settlement transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "txNumber": { "type": "string", "maxLength": 64 },
+        "referenceId": { "type": "string", "maxLength": 100 },
+        "code": { "type": "string", "maxLength": 120 },
+        "type": { "type": "string", "enum": ["purchase", "payment"] },
+        "amountSar": { "type": "number" },
+        "paymentChannel": { "type": "string", "maxLength": 60 },
+        "note": { "type": "string", "maxLength": 500 },
+        "date": { "type": "string", "format": "date" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referenceId", "code", "type", "amountSar", "date", "createdAt"]
+    },
+    "AccountingLedgerEntry": {
+      "title": "AccountingLedgerEntry",
+      "description": "Auditable financial cashflow entry recording date, reference, counterparty, channel, and SAR amount",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "tx_number": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "format": "date" },
+        "direction": { "type": "string", "enum": ["in", "out"] },
+        "category": { "type": "string", "maxLength": 100 },
+        "reference_type": { "type": "string", "enum": ["order", "sale", "expense", "supplier", "stock_purchase", "manual"] },
+        "reference_id": { "type": "string", "maxLength": 120 },
+        "source_party": { "type": "string", "maxLength": 200 },
+        "payment_channel": { "type": "string", "maxLength": 80 },
+        "amount_sar": { "type": "number" },
+        "original_amount": { "type": "number" },
+        "currency_code": { "type": "string", "maxLength": 20 },
+        "exchange_rate": { "type": "number" },
+        "balance_after_sar": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 600 },
+        "linked_record_id": { "type": "string", "maxLength": 128 },
+        "is_manual": { "type": "boolean" },
+        "created_by": { "type": "string", "maxLength": 150 },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "tx_number",
+        "date",
+        "direction",
+        "category",
+        "reference_type",
+        "reference_id",
+        "source_party",
+        "payment_channel",
+        "amount_sar",
+        "created_at"
+      ]
     }
   },
   "firestore": {
@@ -274,6 +397,26 @@
     "/ai_employee_drafts/{draftId}": {
       "schema": "EmployeeDraft",
       "description": "Employee-submitted AI product drafts awaiting admin pricing"
+    },
+    "/accounting_products/{docId}": {
+      "schema": "AccountingProduct",
+      "description": "Accounting inventory items with landed cost"
+    },
+    "/accounting_sales/{docId}": {
+      "schema": "AccountingSale",
+      "description": "Accounting sales register"
+    },
+    "/accounting_expenses/{docId}": {
+      "schema": "AccountingExpense",
+      "description": "Accounting operating expenses"
+    },
+    "/accounting_suppliers/{docId}": {
+      "schema": "AccountingSupplierTx",
+      "description": "Accounting supplier payables and payments"
+    },
+    "/accounting_ledger/{docId}": {
+      "schema": "AccountingLedgerEntry",
+      "description": "Full auditable cashflow ledger tracking every riyal in and out"
     }
   }
 }

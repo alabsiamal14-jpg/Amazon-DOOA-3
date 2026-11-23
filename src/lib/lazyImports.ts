@@ -205,3 +205,21 @@ export const AdminEngineeringArchitectPage = lazy(() =>
   )
 );
 
+export const AdminAccountingSystem = lazy(() =>
+  retryImport(() =>
+    import('../components/AdminAccountingSystem').then((m) => ({
+      default: m.AdminAccountingSystem || m.default,
+    }))
+  )
+);
+
+export const StaffDashboard = lazy(() =>
+  retryImport(() =>
+    import('../components/StaffDashboard').then((m) => ({
+      default: m.StaffDashboard,
+    }))
+  )
+);
+
+
+

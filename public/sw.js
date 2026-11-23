@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amazon-duaa-cache-v2';
+const CACHE_NAME = 'amazon-duaa-cache-v5';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -8,10 +8,38 @@ const PRECACHE_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS).catch(() => {});
+      return Promise.all(
+        PRECACHE_ASSETS.map((asset) =>
+          fetch(asset, { cache: 'no-store' })
+            .then((response) => {
+              if (response && response.ok && response.type === 'basic') {
+                return cache.put(asset, response);
+              }
+            })
+            .catch(() => {})
+        )
+      );
     })
   );
-  self.skipWaiting();
+
+  // First-time install activates immediately; subsequent updates wait for user confirmation via SKIP_WAITING
+  if (!self.registration || !self.registration.active) {
+    self.skipWaiting();
+  }
+});
+
+self.addEventListener('message', (event) => {
+  if (!event.data || typeof event.data !== 'object') return;
+
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+
+  if (event.data.type === 'CLEAR_CACHE') {
+    event.waitUntil(
+      caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+    );
+  }
 });
 
 self.addEventListener('activate', (event) => {
@@ -24,9 +52,8 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
@@ -36,6 +63,12 @@ self.addEventListener('fetch', (event) => {
 
   // Never intercept or cache cross-origin requests (Firebase, Firestore, Google APIs, CDN images)
   if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Never cache /sw.js itself so browsers always detect server-side SW updates immediately
+  if (url.pathname === '/sw.js') {
+    event.respondWith(fetch(event.request, { cache: 'no-store' }));
     return;
   }
 
@@ -55,7 +88,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for HTML navigation & Vite bundles so phones always get the latest deployment on refresh
+  // Network-first for HTML navigation so storefront always serves latest deployment immediately
   const isNavigation =
     event.request.mode === 'navigate' ||
     url.pathname === '/' ||
@@ -65,7 +98,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request, { cache: 'no-store' })
         .then((networkResponse) => {
-          if (networkResponse && networkResponse.ok && networkResponse.type === 'basic') {
+          const ct = networkResponse.headers.get('content-type') || '';
+          if (networkResponse && networkResponse.ok && networkResponse.type === 'basic' && ct.includes('text/html')) {
             const copy = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy)).catch(() => {});
           }
@@ -76,11 +110,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first with cache fallback for same-origin static assets (JS/CSS/icons)
+  // Network-first with cache fallback for same-origin static assets (never cache text/html fallback for JS/CSS)
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((networkResponse) => {
-        if (networkResponse && networkResponse.ok && networkResponse.type === 'basic') {
+        const contentType = networkResponse.headers.get('content-type') || '';
+        const isAssetFile = /\.(?:js|mjs|css|json|svg|png|jpe?g|webp|woff2?)$/i.test(url.pathname);
+        if (
+          networkResponse &&
+          networkResponse.ok &&
+          networkResponse.type === 'basic' &&
+          !(isAssetFile && contentType.includes('text/html'))
+        ) {
           const copy = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
         }

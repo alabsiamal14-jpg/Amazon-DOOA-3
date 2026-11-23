@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import fs from 'fs';
 import http from 'http';
 import crypto from 'crypto';
 import path from 'path';
@@ -35,6 +36,7 @@ import employeeAssistantRouter from './src/server/routes/employee-assistant.ts';
 import bulkImportRouter from './src/server/routes/bulk-import.ts';
 import smartAssistantRouter from './src/server/routes/smart-assistant.ts';
 import engineeringArchitectRouter from './src/server/routes/engineering-architect.ts';
+import accountingRouter from './src/server/routes/accounting.ts';
 import { adminAuth, adminDb, hasAdminServiceAccount } from './src/lib/firebase-admin.ts';
 import { syncFirestoreProduct, deleteFirestoreProduct, invalidateFirestoreCatalogCache } from './src/lib/firestore-catalog.ts';
 import firebaseConfig from './firebase-applet-config.json';
@@ -552,7 +554,6 @@ app.post('/api/db/products', requireStaffOrAdmin, async (req: AuthRequest, res) 
       createdAt: safeCreatedAt,
       updatedAt: new Date().toISOString(),
     });
-    invalidateFirestoreCatalogCache();
 
     return res.json(saved);
   } catch (error: any) {
@@ -590,11 +591,74 @@ app.patch('/api/db/products/:productId/status', requireAdmin, async (req: AuthRe
       status,
       updatedAt: new Date().toISOString(),
     });
-    invalidateFirestoreCatalogCache();
     return res.json(updated);
   } catch (error: any) {
     console.error('Failed to update product status:', error);
     return res.status(500).json({ error: error.message || 'Failed to update product status' });
+  }
+});
+
+app.patch('/api/db/products/:productId/stock', requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { productId } = req.params;
+    const rawStock = Number(req.body?.stock_quantity ?? req.body?.stockQuantity);
+    if (!Number.isFinite(rawStock) || rawStock < 0) {
+      return res.status(400).json({ error: 'Valid non-negative stock_quantity is required' });
+    }
+    const updated = await updateProductStockInDb(productId, rawStock);
+    if (!updated) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    return res.json(updated);
+  } catch (error: any) {
+    console.error('Failed to update product stock:', error);
+    return res.status(500).json({ error: error.message || 'Failed to update product stock' });
+  }
+});
+
+app.patch('/api/db/products/:productId/price', requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { productId } = req.params;
+    const originalPrice = Number(req.body?.original_price ?? req.body?.originalPrice);
+    const rawDiscount = req.body?.discount_price ?? req.body?.discountPrice;
+    const discountPrice =
+      rawDiscount === null || rawDiscount === undefined || rawDiscount === ''
+        ? null
+        : Number(rawDiscount);
+
+    if (!Number.isFinite(originalPrice) || originalPrice < 0) {
+      return res.status(400).json({ error: 'Valid non-negative original_price is required' });
+    }
+    if (discountPrice !== null && (!Number.isFinite(discountPrice) || discountPrice < 0)) {
+      return res.status(400).json({ error: 'Invalid discount_price' });
+    }
+
+    const prod = await getProductById(productId);
+    if (!prod) return res.status(404).json({ error: 'Product not found' });
+
+    const updated = await upsertProduct({
+      id: prod.productId,
+      title_ar: prod.titleAr,
+      description_ar: prod.descriptionAr,
+      original_price: originalPrice,
+      discount_price: discountPrice,
+      stock_quantity: prod.stockQuantity,
+      category_id: prod.categoryId,
+      category_name: prod.categoryName,
+      image_url: prod.imageUrl,
+      tags: (prod.tags as string[]) || [],
+      status: (prod.status as 'draft' | 'published') || 'published',
+      creator_id: prod.creatorId || undefined,
+    });
+    await syncFirestoreProduct(prod.productId, {
+      original_price: originalPrice,
+      discount_price: discountPrice,
+      updatedAt: new Date().toISOString(),
+    });
+    return res.json(updated);
+  } catch (error: any) {
+    console.error('Failed to update product price:', error);
+    return res.status(500).json({ error: error.message || 'Failed to update product price' });
   }
 });
 
@@ -603,7 +667,6 @@ app.delete('/api/db/products/:productId', requireAdmin, async (req: AuthRequest,
     const { productId } = req.params;
     const deleted = await deleteProductFromDb(productId);
     await deleteFirestoreProduct(productId);
-    invalidateFirestoreCatalogCache();
     return res.json({ success: true, deleted });
   } catch (error: any) {
     console.error('Failed to delete product from Cloud SQL:', error);
@@ -1096,6 +1159,9 @@ app.use('/api/admin/smart-assistant', smartAssistantRouter);
 
 // Amazon Duaa AI Engineering Architect Router (Admin only — Independent Engineering Safety & Quality System)
 app.use('/api/admin/engineering-architect', engineeringArchitectRouter);
+
+// Integrated Accounting & Financial Audit System Router (Admin only)
+app.use('/api/admin/accounting', accountingRouter);
 
 // Helper for generating dynamic smart fallback products based on image data
 function getDynamicSmartProductFallback(seedString: string) {
@@ -1948,17 +2014,23 @@ app.all('/api/*', (req, res) => {
 async function startServer() {
   const httpServer = http.createServer(app);
 
+  // Never allow HTTP caching on /sw.js so clients detect updates and recover immediately
+  app.use('/sw.js', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    next();
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     let viteInstance: any = null;
-    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    // HMR is disabled in AI Studio preview proxy environments to avoid broken WebSocket errors
+    const isHmrEnabled = process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true';
 
     const viteReady = import('vite')
       .then(({ createServer: createViteServer }) =>
         createViteServer({
           server: {
             middlewareMode: true,
-            hmr: !isHmrDisabled,
-            ws: isHmrDisabled ? false : { server: httpServer },
+            hmr: isHmrEnabled ? { server: httpServer } : false,
           },
           appType: 'spa',
         })
@@ -1983,9 +2055,32 @@ async function startServer() {
       return res.status(500).send('Dev server failed to initialize Vite middleware.');
     });
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distDir = path.resolve(__dirname, 'dist');
+    const distIndexPath = path.join(distDir, 'index.html');
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html') || filePath.endsWith('sw.js')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      if (
+        req.path.startsWith('/assets/') ||
+        /\.(?:js|mjs|css|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|json)$/i.test(req.path)
+      ) {
+        return res.status(404).type('text/plain').send('Asset not found');
+      }
+      if (!fs.existsSync(distIndexPath)) {
+        return res
+          .status(503)
+          .type('text/html; charset=utf-8')
+          .send('<html dir="rtl" lang="ar"><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>جاري تجهيز ملفات المتجر...</h2><p>يرجى إعادة المحاولة بعد لحظات.</p></body></html>');
+      }
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return res.sendFile(distIndexPath);
     });
   }
 
@@ -2003,7 +2098,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // In Vercel serverless environment or test suites, requests are routed to app directly
-if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
   startServer();
 }
 

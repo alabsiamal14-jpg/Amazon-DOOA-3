@@ -179,7 +179,7 @@ describe('Phase 1 Smart Bulk Product Import E2E', () => {
     }
   });
 
-  it('5. Persists drafts across subsequent GET requests and supports editing before publishing', async () => {
+  it('5. Persists drafts across subsequent GET requests and supports editing with optional/empty/zero price before publishing', async () => {
     const listRes = await request(app)
       .get('/api/admin/bulk-import/drafts')
       .set('Authorization', `Bearer ${adminToken}`);
@@ -188,20 +188,36 @@ describe('Phase 1 Smart Bulk Product Import E2E', () => {
     const allIds = listRes.body.drafts.map((d: any) => d.id);
     expect(allIds).toEqual(expect.arrayContaining([...multiDraftIds, ...zipDraftIds]));
 
-    const editRes = await request(app)
-      .patch(`/api/admin/bulk-import/drafts/${encodeURIComponent(multiDraftIds[0])}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        title_ar: 'سيروم فيتامين سي المطور - مسودة مراجعة',
-        description_ar: 'وصف تسويقي معدل من لوحة الإدارة.',
-        category_id: 'skincare',
-        stock_quantity: 20,
-      });
+    for (const optionalPrice of [undefined, null, '', 0]) {
+      const editRes = await request(app)
+        .patch(`/api/admin/bulk-import/drafts/${encodeURIComponent(multiDraftIds[0])}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title_ar: 'سيروم فيتامين سي المطور - مسودة مراجعة',
+          description_ar: 'وصف تسويقي معدل من لوحة الإدارة.',
+          category_id: 'skincare',
+          brand: 'كود-تاجر-A12',
+          stock_quantity: 20,
+          ...(optionalPrice !== undefined ? { original_price: optionalPrice } : {}),
+        });
 
-    expect(editRes.status).toBe(200);
-    expect(editRes.body.draft.title_ar).toBe('سيروم فيتامين سي المطور - مسودة مراجعة');
-    expect(editRes.body.draft.status).toBe('pending_review');
-    expect(editRes.body.draft.original_price).toBeNull();
+      expect(editRes.status).toBe(200);
+      expect(editRes.body.draft.title_ar).toBe('سيروم فيتامين سي المطور - مسودة مراجعة');
+      expect(editRes.body.draft.brand).toBe('كود-تاجر-A12');
+      expect(editRes.body.draft.status).toBe('pending_review');
+      expect(editRes.body.draft.original_price).toBeNull();
+    }
+
+    const reloadRes = await request(app)
+      .get('/api/admin/bulk-import/drafts')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(reloadRes.status).toBe(200);
+    const reloaded = reloadRes.body.drafts.find((d: any) => d.id === multiDraftIds[0]);
+    expect(reloaded).toBeTruthy();
+    expect(reloaded.title_ar).toBe('سيروم فيتامين سي المطور - مسودة مراجعة');
+    expect(reloaded.description_ar).toBe('وصف تسويقي معدل من لوحة الإدارة.');
+    expect(reloaded.brand).toBe('كود-تاجر-A12');
+    expect(reloaded.image_url).toMatch(/^\/uploads\/bulk-import\/.+\.jpg$/);
   });
 
   it('6. Strictly blocks publishing without valid price > 0 OR without explicit admin approval (even directly via API)', async () => {

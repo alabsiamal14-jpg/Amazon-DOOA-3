@@ -25,6 +25,7 @@ import {
   Loader2,
   Clock,
   ChevronLeft,
+  Landmark,
 } from 'lucide-react';
 
 import {
@@ -82,9 +83,9 @@ import { CartDrawer } from './components/CartDrawer';
 import { AuthModal } from './components/AuthModal';
 import { PublicAddProductModal } from './components/PublicAddProductModal';
 import { DriverPortal } from './components/DriverPortal';
-import { StaffDashboard } from './components/StaffDashboard';
 import { AdminSalesChart } from './components/AdminSalesChart';
 import { OfflineStatusIndicator } from './components/OfflineStatusIndicator';
+import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 
 // Resilient Lazy Loaded Components
 import {
@@ -110,6 +111,8 @@ import {
   AdminBulkImportPanel,
   AdminSmartAssistantPage,
   AdminEngineeringArchitectPage,
+  AdminAccountingSystem,
+  StaffDashboard,
 } from './lib/lazyImports';
 
 export type MainTab =
@@ -127,6 +130,7 @@ export type MainTab =
 export type AdminSubTab =
   | 'products'
   | 'analytics'
+  | 'accounting'
   | 'center'
   | 'bulk-import'
   | 'smart-assistant'
@@ -138,6 +142,115 @@ export type AdminSubTab =
 
 export type AdminTabGroup = 'operations' | 'ai' | 'pricing' | 'config';
 
+function mapApiProductToProduct(raw: any): Product {
+  return {
+    id: String(raw.productId || raw.id || ''),
+    title_ar: String(raw.title_ar ?? raw.titleAr ?? ''),
+    description_ar: String(raw.description_ar ?? raw.descriptionAr ?? ''),
+    original_price: Number(raw.original_price ?? raw.originalPrice ?? 0),
+    discount_price:
+      raw.discount_price !== undefined
+        ? raw.discount_price
+        : raw.discountPrice !== undefined
+          ? raw.discountPrice
+          : null,
+    stock_quantity: Number(raw.stock_quantity ?? raw.stockQuantity ?? 0),
+    category_id: String(raw.category_id ?? raw.categoryId ?? 'skincare'),
+    category_name: String(raw.category_name ?? raw.categoryName ?? 'عناية بالبشرة'),
+    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    image_url: String(raw.image_url ?? raw.imageUrl ?? ''),
+    gallery_images: Array.isArray(raw.gallery_images ?? raw.galleryImages)
+      ? (raw.gallery_images ?? raw.galleryImages)
+      : undefined,
+    video_url: raw.video_url ?? raw.videoUrl ?? undefined,
+    video_duration: raw.video_duration ?? raw.videoDuration ?? undefined,
+    size_or_volume: raw.size_or_volume ?? raw.sizeOrVolume ?? undefined,
+    skin_type: raw.skin_type ?? raw.skinType ?? undefined,
+    key_benefits: Array.isArray(raw.key_benefits ?? raw.keyBenefits)
+      ? (raw.key_benefits ?? raw.keyBenefits)
+      : undefined,
+    how_to_use: raw.how_to_use ?? raw.howToUse ?? undefined,
+    ingredients: raw.ingredients ?? undefined,
+    badge: raw.badge ?? undefined,
+    ai_generated: Boolean(raw.ai_generated ?? raw.aiGenerated),
+    rating: Number.isFinite(Number(raw.rating)) ? Number(raw.rating) : 5.0,
+    reviews_count: Number.isFinite(Number(raw.reviews_count ?? raw.reviewsCount))
+      ? Number(raw.reviews_count ?? raw.reviewsCount)
+      : 0,
+    featured: Boolean(raw.featured),
+    status: raw.status === 'draft' ? 'draft' : 'published',
+    creator_id: raw.creator_id ?? raw.creatorId ?? undefined,
+    created_at:
+      typeof raw.created_at === 'string'
+        ? raw.created_at
+        : raw.createdAt
+          ? new Date(raw.createdAt).toISOString()
+          : new Date().toISOString(),
+  };
+}
+
+function mapApiOrderToOrder(raw: any): Order {
+  return {
+    id: String(raw.id ?? raw.orderNumber ?? raw.order_number ?? ''),
+    order_number: String(raw.order_number ?? raw.orderNumber ?? ''),
+    userId: raw.userId ?? raw.user_id ?? undefined,
+    customer_name: String(raw.customer_name ?? raw.customerName ?? ''),
+    customer_phone: String(raw.customer_phone ?? raw.customerPhone ?? ''),
+    customer_email: raw.customer_email ?? raw.customerEmail ?? undefined,
+    city: String(raw.city ?? ''),
+    address: String(raw.address ?? ''),
+    notes: raw.notes ?? undefined,
+    items: Array.isArray(raw.items) ? raw.items : [],
+    subtotal: Number(raw.subtotal ?? 0),
+    discount_amount: Number(raw.discount_amount ?? raw.discountAmount ?? 0),
+    coupon_code: raw.coupon_code ?? raw.couponCode ?? undefined,
+    delivery_fee: Number(raw.delivery_fee ?? raw.deliveryFee ?? 0),
+    total_amount: Number(raw.total_amount ?? raw.totalAmount ?? 0),
+    status: (raw.status as OrderStatus) || 'pending',
+    whatsapp_sent: Boolean(raw.whatsapp_sent ?? raw.whatsappSent),
+    payment_method: raw.payment_method ?? raw.paymentMethod ?? undefined,
+    delivery_speed: raw.delivery_speed ?? raw.deliverySpeed ?? undefined,
+    driver_name: raw.driver_name ?? raw.driverName ?? undefined,
+    driver_phone: raw.driver_phone ?? raw.driverPhone ?? undefined,
+    driver_id: raw.driver_id ?? raw.driverId ?? undefined,
+    cod_collected: raw.cod_collected ?? raw.codCollected ?? undefined,
+    cod_collected_amount: raw.cod_collected_amount ?? raw.codCollectedAmount ?? undefined,
+    driver_notes: raw.driver_notes ?? raw.driverNotes ?? undefined,
+    delivered_at:
+      typeof raw.delivered_at === 'string'
+        ? raw.delivered_at
+        : raw.deliveredAt
+          ? new Date(raw.deliveredAt).toISOString()
+          : undefined,
+    created_at:
+      typeof raw.created_at === 'string'
+        ? raw.created_at
+        : raw.createdAt
+          ? new Date(raw.createdAt).toISOString()
+          : new Date().toISOString(),
+    updated_at:
+      typeof raw.updated_at === 'string'
+        ? raw.updated_at
+        : raw.updatedAt
+          ? new Date(raw.updatedAt).toISOString()
+          : undefined,
+  };
+}
+
+function getInitialMainTab(): MainTab {
+  if (typeof window === 'undefined') return 'store';
+  const path = window.location.pathname.replace(/\/+$/, '').toLowerCase();
+  if (path === '/admin') return 'admin';
+  if (path === '/orders') return 'orders';
+  if (path === '/driver') return 'driver';
+  if (path === '/employee-assistant') return 'employee-assistant';
+  if (path === '/dev-advisor') return 'dev-advisor';
+  if (path === '/track-order') return 'track-order';
+  if (path === '/branches') return 'branches';
+  if (path === '/checkout') return 'checkout';
+  return 'store';
+}
+
 export const App: React.FC = () => {
   // Core Store State
   const [categories] = useState<Category[]>(INITIAL_CATEGORIES);
@@ -148,7 +261,7 @@ export const App: React.FC = () => {
   const [wishlist, setWishlist] = useState<string[]>(() => getStoredWishlist());
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState<MainTab>('store');
+  const [activeTab, setActiveTab] = useState<MainTab>(getInitialMainTab);
   const [adminSubTab, setAdminSubTab] = useState<AdminSubTab>('products');
   const [adminTabGroup, setAdminTabGroup] = useState<AdminTabGroup>('operations');
   const [adminProductViewMode, setAdminProductViewMode] = useState<'list' | 'add'>('list');
@@ -176,7 +289,7 @@ export const App: React.FC = () => {
 
   // Synchronize admin tab group automatically when sub-tab changes
   useEffect(() => {
-    if (adminSubTab === 'products' || adminSubTab === 'analytics') {
+    if (adminSubTab === 'products' || adminSubTab === 'analytics' || adminSubTab === 'accounting') {
       setAdminTabGroup('operations');
     } else if (
       adminSubTab === 'center' ||
@@ -256,14 +369,22 @@ export const App: React.FC = () => {
     let isMounted = true;
 
     async function loadInitialData() {
+      const authHeaders = adminUser || currentUser ? await getAuthHeadersAsync() : {};
+
       // 1. Fetch remote catalog from server or Firestore
       try {
-        const res = await fetch('/api/products');
+        const res = await fetch('/api/db/products', {
+          credentials: 'include',
+          headers: authHeaders,
+        });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0 && isMounted) {
-            setProducts(data);
-            saveStoredProducts(data);
+            const mapped = data.map(mapApiProductToProduct).filter((p) => p.id && p.title_ar);
+            if (mapped.length > 0) {
+              setProducts(mapped);
+              saveStoredProducts(mapped);
+            }
           }
         } else {
           const fsRes = await fetchProductsFirestore();
@@ -276,15 +397,18 @@ export const App: React.FC = () => {
         console.warn('[Catalog] Using cached products:', e);
       }
 
-      // 2. Fetch orders
+      // 2. Fetch orders only for authenticated users (prevents unauthenticated 401 noise on public visits)
+      if (!adminUser && !currentUser) {
+        return;
+      }
       try {
-        const authHeaders = await getAuthHeadersAsync();
-        const res = await fetch('/api/orders', { credentials: 'include', headers: authHeaders });
+        const res = await fetch('/api/db/orders', { credentials: 'include', headers: authHeaders });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && isMounted) {
-            setOrders(data);
-            saveStoredOrders(data);
+            const mappedOrders = data.map(mapApiOrderToOrder);
+            setOrders(mappedOrders);
+            saveStoredOrders(mappedOrders);
           }
         } else {
           const fsOrdersRes = await fetchOrdersFirestore(currentUser?.uid, Boolean(adminUser));
@@ -312,12 +436,14 @@ export const App: React.FC = () => {
 
       // Bulk import drafts
       try {
-        const res = await fetch('/api/bulk-import/drafts', { headers: authHeaders });
+        const res = await fetch('/api/admin/bulk-import/drafts', {
+          credentials: 'include',
+          headers: authHeaders,
+        });
         if (res.ok) {
-          const drafts = await res.json();
-          if (Array.isArray(drafts)) {
-            setPendingBulkImportCount(drafts.filter((d: any) => d.status === 'pending_review').length);
-          }
+          const data = await res.json();
+          const drafts = Array.isArray(data) ? data : Array.isArray(data?.drafts) ? data.drafts : [];
+          setPendingBulkImportCount(drafts.filter((d: any) => d.status === 'pending_review').length);
         }
       } catch {
         // Fallback
@@ -325,12 +451,14 @@ export const App: React.FC = () => {
 
       // Smart assistant drafts
       try {
-        const res = await fetch('/api/smart-assistant/drafts', { headers: authHeaders });
+        const res = await fetch('/api/admin/smart-assistant/drafts', {
+          credentials: 'include',
+          headers: authHeaders,
+        });
         if (res.ok) {
-          const drafts = await res.json();
-          if (Array.isArray(drafts)) {
-            setPendingSmartAssistantCount(drafts.filter((d: any) => d.status === 'pending_review').length);
-          }
+          const data = await res.json();
+          const drafts = Array.isArray(data) ? data : Array.isArray(data?.drafts) ? data.drafts : [];
+          setPendingSmartAssistantCount(drafts.filter((d: any) => d.status === 'pending_review').length);
         }
       } catch {
         // Fallback
@@ -338,12 +466,14 @@ export const App: React.FC = () => {
 
       // Employee drafts
       try {
-        const res = await fetch('/api/employee-assistant/drafts', { headers: authHeaders });
+        const res = await fetch('/api/employee-assistant/drafts', {
+          credentials: 'include',
+          headers: authHeaders,
+        });
         if (res.ok) {
-          const drafts = await res.json();
-          if (Array.isArray(drafts)) {
-            setPendingEmployeeDraftsCount(drafts.filter((d: any) => d.status === 'pending_pricing').length);
-          }
+          const data = await res.json();
+          const drafts = Array.isArray(data) ? data : Array.isArray(data?.drafts) ? data.drafts : [];
+          setPendingEmployeeDraftsCount(drafts.filter((d: any) => d.status === 'pending_pricing').length);
         } else {
           const fsDrafts = await fetchEmployeeDraftsFirestore();
           setPendingEmployeeDraftsCount(fsDrafts.filter((d) => d.status === 'pending_pricing').length);
@@ -462,8 +592,9 @@ export const App: React.FC = () => {
 
     try {
       const authHeaders = await getAuthHeadersAsync();
-      await fetch('/api/products', {
+      await fetch('/api/db/products', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify(newProduct),
       });
@@ -507,8 +638,9 @@ export const App: React.FC = () => {
 
     try {
       const authHeaders = await getAuthHeadersAsync();
-      await fetch(`/api/products/${productId}`, {
+      await fetch(`/api/db/products/${encodeURIComponent(productId)}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: authHeaders,
       });
     } catch (err) {
@@ -539,8 +671,9 @@ export const App: React.FC = () => {
 
     try {
       const authHeaders = await getAuthHeadersAsync();
-      await fetch(`/api/products/${productId}/stock`, {
+      await fetch(`/api/db/products/${encodeURIComponent(productId)}/stock`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ stock_quantity: safeStock }),
       });
@@ -598,8 +731,9 @@ export const App: React.FC = () => {
 
       try {
         const authHeaders = await getAuthHeadersAsync();
-        await fetch(`/api/products/${productId}/price`, {
+        await fetch(`/api/db/products/${encodeURIComponent(productId)}/price`, {
           method: 'PATCH',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({ original_price: originalPrice, discount_price: discountPrice }),
         });
@@ -720,7 +854,8 @@ export const App: React.FC = () => {
 
   // Order Handlers
   const handleOrderPlaced = useCallback(
-    async (newOrder: Order) => {
+    async (newOrder: Order): Promise<Order> => {
+      let resolvedOrder = newOrder;
       setOrders((prev) => {
         const next = [newOrder, ...prev.filter((o) => o.id !== newOrder.id)];
         saveStoredOrders(next);
@@ -730,30 +865,66 @@ export const App: React.FC = () => {
       saveStoredCart([]);
 
       try {
-        await createOrderFirestore(newOrder, currentUser?.uid);
+        const authHeaders = await getAuthHeadersAsync();
+        const res = await fetch('/api/orders/checkout', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({
+            idempotencyKey: newOrder.id,
+            orderNumber: newOrder.order_number,
+            userId: currentUser?.uid || newOrder.userId || 'guest',
+            customerName: newOrder.customer_name,
+            customerPhone: newOrder.customer_phone,
+            customerEmail: newOrder.customer_email || '',
+            city: newOrder.city,
+            address: newOrder.address,
+            notes: newOrder.notes || '',
+            paymentMethod: newOrder.payment_method,
+            deliverySpeed: newOrder.delivery_speed,
+            couponCode: newOrder.coupon_code,
+            items: (newOrder.items || []).map((i) => ({
+              product_id: i.product_id,
+              quantity: i.quantity,
+            })),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.order && data.order.order_number) {
+            resolvedOrder = data.order;
+            setOrders((prev) => {
+              const next = [resolvedOrder, ...prev.filter((o) => o.order_number !== resolvedOrder.order_number)];
+              saveStoredOrders(next);
+              return next;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Order API Create] fallback:', err);
+      }
+
+      try {
+        await createOrderFirestore(resolvedOrder, currentUser?.uid);
       } catch (err) {
         console.warn('[Firestore Order Create] fallback:', err);
       }
 
-      try {
-        const authHeaders = await getAuthHeadersAsync();
-        await fetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
-          body: JSON.stringify(newOrder),
-        });
-      } catch (err) {
-        console.warn('[Order API Create] fallback:', err);
-      }
+      return resolvedOrder;
     },
     [currentUser?.uid]
   );
 
   const handleUpdateOrderStatus = useCallback(async (orderId: string, status: OrderStatus) => {
+    let targetOrderNumber = orderId;
     setOrders((prev) => {
-      const next = prev.map((o) =>
-        o.id === orderId ? { ...o, status, updated_at: new Date().toISOString() } : o
-      );
+      const next = prev.map((o) => {
+        if (o.id === orderId || o.order_number === orderId) {
+          targetOrderNumber = o.order_number || orderId;
+          return { ...o, status, updated_at: new Date().toISOString() };
+        }
+        return o;
+      });
       saveStoredOrders(next);
       return next;
     });
@@ -766,8 +937,9 @@ export const App: React.FC = () => {
 
     try {
       const authHeaders = await getAuthHeadersAsync();
-      await fetch(`/api/orders/${orderId}/status`, {
+      await fetch(`/api/db/orders/${encodeURIComponent(targetOrderNumber)}/status`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ status }),
       });
@@ -809,8 +981,9 @@ export const App: React.FC = () => {
 
       try {
         const authHeaders = await getAuthHeadersAsync();
-        await fetch(`/api/orders/${orderId}/driver`, {
+        await fetch(`/api/db/orders/${encodeURIComponent(orderNumber || orderId)}/driver`, {
           method: 'PATCH',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             driver_name: driver.driverName,
@@ -861,8 +1034,9 @@ export const App: React.FC = () => {
 
       try {
         const authHeaders = await getAuthHeadersAsync();
-        await fetch(`/api/orders/${orderId}/delivery-status`, {
+        await fetch(`/api/db/orders/${encodeURIComponent(orderNumber || orderId)}/delivery`, {
           method: 'PATCH',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             status,
@@ -911,10 +1085,11 @@ export const App: React.FC = () => {
   const handleUpdateUserRole = useCallback(async (email: string, role: 'staff' | 'user') => {
     try {
       const authHeaders = await getAuthHeadersAsync();
-      const res = await fetch('/api/admin/users/role', {
-        method: 'POST',
+      const res = await fetch(`/api/db/users/${encodeURIComponent(email)}/role`, {
+        method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ role }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -978,8 +1153,9 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-['Cairo',sans-serif] flex flex-col antialiased selection:bg-rose-100 selection:text-rose-900" dir="rtl">
-      {/* Offline Status Banner */}
+      {/* Offline Status & App Update Banners */}
       <OfflineStatusIndicator />
+      <UpdateNotificationBanner />
 
       {/* Global Navigation Bar */}
       <Navbar
@@ -1146,14 +1322,16 @@ export const App: React.FC = () => {
             )}
 
             {currentUser?.role === 'staff' && !adminUser && (
-              <StaffDashboard
-                currentUser={currentUser}
-                products={products}
-                settings={settings}
-                onLogout={handleLogoutUser}
-                onProductCreated={handleProductCreated}
-                onProductsCreated={handleProductsCreated}
-              />
+              <Suspense fallback={suspenseFallback}>
+                <StaffDashboard
+                  currentUser={currentUser}
+                  products={products}
+                  settings={settings}
+                  onLogout={handleLogoutUser}
+                  onProductCreated={handleProductCreated}
+                  onProductsCreated={handleProductsCreated}
+                />
+              </Suspense>
             )}
 
             {adminUser && (
@@ -1241,6 +1419,19 @@ export const App: React.FC = () => {
                         >
                           <BarChart3 className="w-4 h-4 text-emerald-300" />
                           <span>الإحصائيات والأداء</span>
+                        </button>
+
+                        {/* 2b. Accounting & Financial Audit System */}
+                        <button
+                          onClick={() => setAdminSubTab('accounting')}
+                          className={`text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+                            adminSubTab === 'accounting'
+                              ? 'bg-emerald-600 text-white shadow-lg font-black ring-2 ring-emerald-300'
+                              : 'text-emerald-300 hover:text-white hover:bg-emerald-500/10'
+                          }`}
+                        >
+                          <Landmark className="w-4 h-4 text-emerald-300" />
+                          <span>النظام المحاسبي والتدقيق</span>
                         </button>
 
                         {/* 3. AI Supplier Center */}
@@ -1533,6 +1724,18 @@ export const App: React.FC = () => {
                   </div>
                 )}
 
+                {/* SubTab 2b: Integrated Accounting & Financial Audit System */}
+                {adminSubTab === 'accounting' && (
+                  <Suspense fallback={suspenseFallback}>
+                    <AdminAccountingSystem
+                      orders={orders}
+                      products={products}
+                      settings={settings}
+                      adminName={adminUser?.displayName || currentUser?.name || 'admin'}
+                    />
+                  </Suspense>
+                )}
+
                 {/* SubTab 3: AI Supplier Intelligence Center */}
                 {adminSubTab === 'center' && (
                   <Suspense fallback={suspenseFallback}>
@@ -1697,11 +1900,11 @@ export const App: React.FC = () => {
         />
       </Suspense>
 
-      {/* Global Luxury Footer */}
+      {/* Global Luxury Customer Footer */}
       <footer className="bg-stone-950 text-stone-400 border-t border-stone-800 text-xs py-12 mt-16 font-['Cairo',sans-serif]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8 pb-8 border-b border-stone-900">
-            <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 mb-8 pb-8 border-b border-stone-900">
+            <div className="space-y-3 sm:col-span-2 md:col-span-1">
               <div className="flex items-center gap-2">
                 <span className="w-8 h-8 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center text-white font-black text-sm shadow-sm">
                   AD
@@ -1718,22 +1921,38 @@ export const App: React.FC = () => {
               <h4 className="text-white font-bold text-xs">روابط سريعة</h4>
               <ul className="space-y-1.5 text-stone-400 text-xs">
                 <li>
-                  <button onClick={() => setActiveTab('store')} className="hover:text-rose-400 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('store')}
+                    className="hover:text-rose-400 transition-colors cursor-pointer"
+                  >
                     المتجر والمنتجات
                   </button>
                 </li>
                 <li>
-                  <button onClick={() => setActiveTab('track-order')} className="hover:text-rose-400 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('track-order')}
+                    className="hover:text-rose-400 transition-colors cursor-pointer"
+                  >
                     تتبع الشحنات والطلبات
                   </button>
                 </li>
                 <li>
-                  <button onClick={() => setActiveTab('branches')} className="hover:text-rose-400 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('branches')}
+                    className="hover:text-rose-400 transition-colors cursor-pointer"
+                  >
                     فروعنا ومواقع الأتيليه
                   </button>
                 </li>
                 <li>
-                  <button onClick={() => setIsPublicAddProductOpen(true)} className="hover:text-rose-400 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setIsPublicAddProductOpen(true)}
+                    className="hover:text-rose-400 transition-colors cursor-pointer"
+                  >
                     طلب إدراج منتج جديد
                   </button>
                 </li>
@@ -1741,52 +1960,33 @@ export const App: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-white font-bold text-xs">خدمة العملاء والتواصل</h4>
+              <h4 className="text-white font-bold text-xs">خدمة العملاء والسياسات</h4>
               <ul className="space-y-1.5 text-stone-400 text-xs">
-                <li>خدمة عملاء واتساب: {settings.whatsappNumber}</li>
+                <li>
+                  <a
+                    href={`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-emerald-400 transition-colors"
+                  >
+                    خدمة عملاء واتساب: {settings.whatsappNumber}
+                  </a>
+                </li>
                 <li>شحن وتوصيل فوري لجميع المدن</li>
-                <li>ضمان استرجاع واستبدال مرن</li>
-                <li>دفع عند الاستلام وبطاقات مدى</li>
-              </ul>
-            </div>
-
-            <div className="space-y-2">
-              <h4 className="text-white font-bold text-xs">بوابات الشركاء والإدارة</h4>
-              <ul className="space-y-1.5 text-stone-400 text-xs">
-                <li>
-                  <button onClick={() => setActiveTab('admin')} className="hover:text-rose-400 transition-colors">
-                    لوحة تحكم الإدارة
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => setActiveTab('driver')} className="hover:text-rose-400 transition-colors">
-                    بوابة الكباتن والمناديب
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => setActiveTab('employee-assistant')} className="hover:text-rose-400 transition-colors">
-                    مساعد الموظفين الذكي
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => setActiveTab('dev-advisor')} className="hover:text-rose-400 transition-colors">
-                    المستشار البرمجي والهندسي
-                  </button>
-                </li>
+                <li>ضمان استرجاع واستبدال مرن وفق الشروط</li>
+                <li>دفع عند الاستلام وبطاقات مدى والتحويل البنكي</li>
               </ul>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-stone-500 text-[11px]">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-stone-500 text-[11px] text-center sm:text-right">
             <div>
               جميع الحقوق محفوظة © {new Date().getFullYear()} {settings.storeName}. تجربة تسوق عالمية فاخرة.
             </div>
-            <div className="flex items-center gap-4">
-              <span>مدعوم بنظام الذكاء الاصطناعي السحابي</span>
+            <div className="flex items-center gap-3 text-stone-400">
+              <span>منتجات أصلية 100%</span>
               <span>•</span>
-              <button onClick={() => setActiveTab('admin')} className="hover:text-rose-400 transition-colors">
-                دخول الإدارة
-              </button>
+              <span>تسوق آمن وخدمة عملاء متواصلة</span>
             </div>
           </div>
         </div>

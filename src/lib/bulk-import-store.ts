@@ -270,12 +270,12 @@ async function persistBulkDraftToFirestore(draft: BulkImportDraft): Promise<bool
 }
 
 export function validatePositivePrice(value: unknown): number {
-  if (value === null || value === undefined || value === '') {
-    throw new Error('السعر حقل إلزامي: يمنع نشر أو اعتماد أي منتج بدون سعر صحيح أكبر من صفر.');
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
+    throw new Error('يرجى تحديد السعر الأساسي (أكبر من صفر) أولاً قبل اعتماد ونشر المنتج في المتجر.');
   }
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) {
-    throw new Error('السعر حقل إلزامي: يجب أن يكون السعر رقماً صحيحاً أكبر من صفر.');
+    throw new Error('يرجى تحديد السعر الأساسي (أكبر من صفر) أولاً قبل اعتماد ونشر المنتج في المتجر.');
   }
   return Math.round(num * 100) / 100;
 }

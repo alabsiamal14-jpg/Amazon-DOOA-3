@@ -233,6 +233,8 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
     setFeedback(null);
     try {
       const headers = await getAuthHeadersAsync();
+      const trimmedPrice = state.original_price.trim();
+      const trimmedDiscount = state.discount_price.trim();
       const res = await fetch(`/api/admin/bulk-import/drafts/${encodeURIComponent(draftId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...headers },
@@ -242,15 +244,21 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
           category_id: state.category_id,
           brand: state.brand,
           size_or_volume: state.size_or_volume,
-          stock_quantity: state.stock_quantity ? Number(state.stock_quantity) : 10,
-          original_price: state.original_price ? Number(state.original_price) : null,
-          discount_price: state.discount_price ? Number(state.discount_price) : null,
+          stock_quantity: state.stock_quantity.trim() ? Number(state.stock_quantity) : 10,
+          original_price: trimmedPrice ? Number(trimmedPrice) : null,
+          discount_price: trimmedDiscount ? Number(trimmedDiscount) : null,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'تعذر حفظ تعديلات المسودة.');
 
       setDrafts((prev) => prev.map((d) => (d.id === draftId ? data.draft : d)));
+      setInvalidDraftIds((prev) => {
+        if (!prev[draftId]) return prev;
+        const copy = { ...prev };
+        delete copy[draftId];
+        return copy;
+      });
       setFeedback({ type: 'success', message: 'تم حفظ المسودة في منطقة المراجعة دون نشرها بعد.' });
     } catch (err: any) {
       setFeedback({ type: 'error', message: err?.message || 'تعذر حفظ المسودة.' });
@@ -264,13 +272,14 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
     if (!state) return;
 
     if (!isValidPriceInput(state.original_price)) {
+      const msg = 'يرجى تحديد السعر الأساسي (أكبر من صفر) أولاً قبل اعتماد ونشر المنتج في المتجر.';
       setInvalidDraftIds((prev) => ({
         ...prev,
-        [draftId]: 'السعر إلزامي: يجب إدخال سعر أكبر من صفر قبل الاعتماد والنشر.',
+        [draftId]: msg,
       }));
       setFeedback({
         type: 'error',
-        message: 'يُمنع نشر أي منتج بدون تحديد سعر صحيح أكبر من صفر.',
+        message: msg,
       });
       return;
     }
@@ -340,7 +349,7 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
       if (!state || !draft) continue;
 
       if (!isValidPriceInput(state.original_price)) {
-        invalidMap[id] = 'السعر مفقود أو غير صالح (يجب أن يكون أكبر من صفر).';
+        invalidMap[id] = 'يرجى تحديد السعر الأساسي (أكبر من صفر) أولاً قبل اعتماد ونشر المنتج في المتجر.';
       } else {
         payloadItems.push({
           id,
@@ -360,7 +369,7 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
       setInvalidDraftIds((prev) => ({ ...prev, ...invalidMap }));
       setFeedback({
         type: 'error',
-        message: `لا يمكن إتمام النشر الجماعي: يوجد (${Object.keys(invalidMap).length}) منتج بدون سعر صحيح أكبر من صفر. يرجى تسعير كل منتج محدد أولاً.`,
+        message: `لا يمكن إتمام النشر الجماعي: يوجد (${Object.keys(invalidMap).length}) منتج بدون سعر أساسي صحيح أكبر من صفر. يرجى تحديد السعر الأساسي أولاً قبل النشر.`,
       });
       return;
     }
@@ -739,7 +748,6 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
               if (!state) return null;
               const isBusy = busyId === draft.id || bulkBusy;
               const isSelected = selectedIds.has(draft.id);
-              const priceOk = isValidPriceInput(state.original_price);
               const rowError = invalidDraftIds[draft.id];
               const isPublished = draft.status === 'approved_published';
 
@@ -857,20 +865,20 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         <div>
                           <label className="block text-xs font-bold text-stone-700 mb-1">
-                            السعر الإلزامي ({settings.currency}) *
+                            السعر الأساسي ({settings.currency}) (اختياري للمسودة)
                           </label>
                           <input
                             type="number"
-                            min="0.01"
+                            min="0"
                             step="any"
-                            placeholder="أدخل سعراً أكبر من 0"
+                            placeholder="اختياري للمسودة — مطلوب عند النشر"
                             value={state.original_price}
                             onChange={(e) =>
                               updateField(draft.id, 'original_price', e.target.value)
                             }
                             className={`w-full border rounded-lg px-3 py-2 text-xs font-bold tabular-nums focus:outline-hidden ${
-                              !priceOk
-                                ? 'border-amber-400 bg-amber-50/60 focus:border-rose-500'
+                              rowError
+                                ? 'border-rose-400 bg-rose-50/60 focus:border-rose-500'
                                 : 'border-stone-200 bg-white focus:border-rose-500'
                             }`}
                           />
@@ -921,13 +929,10 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
                         </div>
                       </div>
 
-                      {(!priceOk || rowError) && (
-                        <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
-                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>
-                            {rowError ||
-                              'السعر حقل إلزامي: لا يمكن اعتماد أو نشر هذا المنتج قبل تحديد سعر صحيح أكبر من صفر.'}
-                          </span>
+                      {rowError && (
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-700">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                          <span>{rowError}</span>
                         </div>
                       )}
 
@@ -954,7 +959,7 @@ export const AdminBulkImportPanel: React.FC<AdminBulkImportPanelProps> = ({
 
                         <button
                           type="button"
-                          disabled={isBusy || !priceOk}
+                          disabled={isBusy}
                           onClick={() => handlePublishSingle(draft.id)}
                           className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-300 disabled:text-stone-600 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
                         >

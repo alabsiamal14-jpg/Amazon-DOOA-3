@@ -31,7 +31,9 @@ export function getStoredWishlist(): string[] {
   try {
     const raw = localStorage.getItem(WISHLIST_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
   } catch (e) {
     console.error('Error loading wishlist from storage:', e);
     return [];
@@ -47,21 +49,86 @@ export function saveStoredWishlist(wishlistIds: string[]): void {
 }
 const ADMIN_SESSION_KEY = 'elen_beauty_admin_session_v1';
 
+function normalizeStoredProduct(raw: any): Product | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  if (!id) return null;
+
+  const origPrice = Number(raw.original_price);
+  const discPriceRaw = raw.discount_price;
+  const discPrice =
+    discPriceRaw === null || discPriceRaw === undefined || discPriceRaw === ''
+      ? null
+      : Number.isFinite(Number(discPriceRaw))
+        ? Number(discPriceRaw)
+        : null;
+  const stockQty = Number(raw.stock_quantity);
+  const ratingVal = Number(raw.rating);
+  const reviewsVal = Number(raw.reviews_count);
+
+  return {
+    ...raw,
+    id,
+    title_ar:
+      typeof raw.title_ar === 'string' && raw.title_ar.trim()
+        ? raw.title_ar
+        : 'منتج عناية وتجميل',
+    description_ar: typeof raw.description_ar === 'string' ? raw.description_ar : '',
+    original_price: Number.isFinite(origPrice) && origPrice >= 0 ? origPrice : 0,
+    discount_price: discPrice,
+    stock_quantity: Number.isFinite(stockQty) && stockQty >= 0 ? Math.floor(stockQty) : 0,
+    category_id:
+      typeof raw.category_id === 'string' && raw.category_id.trim()
+        ? raw.category_id
+        : 'skincare',
+    category_name:
+      typeof raw.category_name === 'string' && raw.category_name.trim()
+        ? raw.category_name
+        : 'العناية بالبشرة',
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0)
+      : [],
+    image_url: typeof raw.image_url === 'string' ? raw.image_url : '',
+    gallery_images: Array.isArray(raw.gallery_images)
+      ? raw.gallery_images.filter((g: unknown): g is string => typeof g === 'string' && g.trim().length > 0)
+      : undefined,
+    rating: Number.isFinite(ratingVal) ? ratingVal : 5,
+    reviews_count: Number.isFinite(reviewsVal) ? reviewsVal : 0,
+    featured: Boolean(raw.featured),
+    created_at:
+      typeof raw.created_at === 'string' && raw.created_at.trim()
+        ? raw.created_at
+        : new Date().toISOString(),
+  };
+}
+
 export function getStoredProducts(): Product[] {
   try {
     const raw = localStorage.getItem(PRODUCTS_KEY);
     if (!raw) return INITIAL_PRODUCTS;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
+      const sanitized = parsed
+        .map(normalizeStoredProduct)
+        .filter((p): p is Product => p !== null);
+
+      if (sanitized.length === 0) {
+        return INITIAL_PRODUCTS;
+      }
+
       // Merge any new INITIAL_PRODUCTS that don't exist yet in the saved array
-      const existingIds = new Set(parsed.map((p: Product) => p.id));
+      const existingIds = new Set(sanitized.map((p) => p.id));
       const missingInitial = INITIAL_PRODUCTS.filter((ip) => !existingIds.has(ip.id));
-      if (missingInitial.length > 0) {
-        const merged = [...parsed, ...missingInitial];
-        localStorage.setItem(PRODUCTS_KEY, JSON.stringify(merged));
+      if (missingInitial.length > 0 || sanitized.length !== parsed.length) {
+        const merged = [...sanitized, ...missingInitial];
+        try {
+          localStorage.setItem(PRODUCTS_KEY, JSON.stringify(merged));
+        } catch {
+          // Ignore quota errors while self-healing storage
+        }
         return merged;
       }
-      return parsed;
+      return sanitized;
     }
     return INITIAL_PRODUCTS;
   } catch (e) {
@@ -144,8 +211,11 @@ export function getStoredSettings(): StoreSettings {
         : INITIAL_SETTINGS;
     }
     const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return INITIAL_SETTINGS;
+    }
     delete parsed.adminPassword; // Purge legacy plaintext password
-    if (parsed.whatsappNumber === '966500000000' || parsed.storeName?.includes('إيلين')) {
+    if (parsed.whatsappNumber === '966500000000' || (typeof parsed.storeName === 'string' && parsed.storeName.includes('إيلين'))) {
       parsed.whatsappNumber = INITIAL_SETTINGS.whatsappNumber;
       parsed.storeName = INITIAL_SETTINGS.storeName;
       parsed.tagline = INITIAL_SETTINGS.tagline;
@@ -153,13 +223,44 @@ export function getStoredSettings(): StoreSettings {
     }
     const mergedCurrencies = {
       ...(INITIAL_SETTINGS.currencies || {}),
-      ...(parsed.currencies && typeof parsed.currencies === 'object' ? parsed.currencies : {}),
+      ...(parsed.currencies && typeof parsed.currencies === 'object' && !Array.isArray(parsed.currencies)
+        ? parsed.currencies
+        : {}),
     };
-    const preferredCode = storedActiveCurrency || parsed.activeCurrency || INITIAL_SETTINGS.activeCurrency || 'SAR';
+    const preferredCode =
+      storedActiveCurrency ||
+      (typeof parsed.activeCurrency === 'string' ? parsed.activeCurrency : '') ||
+      INITIAL_SETTINGS.activeCurrency ||
+      'SAR';
     const activeCurrency = mergedCurrencies[preferredCode]?.active ? preferredCode : 'SAR';
+    const freeDelivery = Number(parsed.freeDeliveryThreshold);
+    const deliveryFee = Number(parsed.deliveryFee);
+
     return {
       ...INITIAL_SETTINGS,
       ...parsed,
+      storeName:
+        typeof parsed.storeName === 'string' && parsed.storeName.trim()
+          ? parsed.storeName
+          : INITIAL_SETTINGS.storeName,
+      tagline:
+        typeof parsed.tagline === 'string' ? parsed.tagline : INITIAL_SETTINGS.tagline,
+      whatsappNumber:
+        typeof parsed.whatsappNumber === 'string' && parsed.whatsappNumber.trim()
+          ? parsed.whatsappNumber
+          : INITIAL_SETTINGS.whatsappNumber,
+      currency:
+        typeof parsed.currency === 'string' && parsed.currency.trim()
+          ? parsed.currency
+          : INITIAL_SETTINGS.currency,
+      freeDeliveryThreshold:
+        Number.isFinite(freeDelivery) && freeDelivery >= 0
+          ? freeDelivery
+          : INITIAL_SETTINGS.freeDeliveryThreshold,
+      deliveryFee:
+        Number.isFinite(deliveryFee) && deliveryFee >= 0
+          ? deliveryFee
+          : INITIAL_SETTINGS.deliveryFee,
       currencies: mergedCurrencies,
       activeCurrency,
     };
@@ -184,7 +285,20 @@ export function getStoredCart(): CartItem[] {
   try {
     const raw = localStorage.getItem(CART_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item): CartItem | null => {
+        if (!item || typeof item !== 'object') return null;
+        const product = normalizeStoredProduct((item as any).product);
+        if (!product) return null;
+        const qty = Number((item as any).quantity);
+        return {
+          product,
+          quantity: Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1,
+        };
+      })
+      .filter((item): item is CartItem => item !== null);
   } catch (e) {
     console.error('Error loading cart from storage:', e);
     return [];
@@ -203,7 +317,15 @@ export function getStoredOrders(): Order[] {
   try {
     const raw = localStorage.getItem(ORDERS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((order): order is Order => Boolean(order && typeof order === 'object' && !Array.isArray(order) && typeof order.id === 'string' && order.id.trim() !== ''))
+      .map((order) => ({
+        ...order,
+        items: Array.isArray(order.items) ? order.items : [],
+        total_amount: Number.isFinite(Number(order.total_amount)) ? Number(order.total_amount) : 0,
+      }));
   } catch (e) {
     console.error('Error loading orders from storage:', e);
     return [];
@@ -278,7 +400,19 @@ export function getAdminSession(): AdminUser | null {
     const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      typeof parsed.id !== 'string' ||
+      !parsed.id.trim() ||
+      typeof parsed.username !== 'string' ||
+      !parsed.username.trim() ||
+      typeof parsed.role !== 'string' ||
+      !parsed.role.trim()
+    ) {
+      return null;
+    }
     const { token: _ignoredToken, ...safeMetadata } = parsed;
     return safeMetadata as AdminUser;
   } catch {
@@ -410,6 +544,9 @@ export function getEmployeeSession(): EmployeeSession | null {
 export function setEmployeeSession(session: EmployeeSession): void {
   try {
     localStorage.setItem(EMPLOYEE_SESSION_KEY, JSON.stringify(session));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('amazon-duaa-employee-session-changed'));
+    }
   } catch (e) {
     console.error('Error saving employee session:', e);
   }
@@ -418,6 +555,9 @@ export function setEmployeeSession(session: EmployeeSession): void {
 export function clearEmployeeSession(): void {
   try {
     localStorage.removeItem(EMPLOYEE_SESSION_KEY);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('amazon-duaa-employee-session-changed'));
+    }
   } catch (e) {
     console.error('Error clearing employee session:', e);
   }

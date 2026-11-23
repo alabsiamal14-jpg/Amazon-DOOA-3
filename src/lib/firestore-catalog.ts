@@ -8,6 +8,7 @@ const DEFAULT_FALLBACK_IMAGE =
 
 let cachedCatalog: Product[] | null = null;
 let cachedAt = 0;
+let inFlightCatalogPromise: Promise<Product[]> | null = null;
 let lastFirestoreCatalogError: string | null = null;
 const CATALOG_CACHE_TTL_MS = 60_000;
 
@@ -18,6 +19,21 @@ export function getLastFirestoreCatalogError(): string | null {
 export function invalidateFirestoreCatalogCache(): void {
   cachedCatalog = null;
   cachedAt = 0;
+}
+
+export function upsertCachedCatalogProduct(product: Product): void {
+  if (!cachedCatalog) return;
+  const idx = cachedCatalog.findIndex((p) => p.id === product.id);
+  if (idx >= 0) {
+    cachedCatalog[idx] = product;
+  } else {
+    cachedCatalog = [product, ...cachedCatalog];
+  }
+}
+
+export function removeCachedCatalogProduct(productId: string): void {
+  if (!cachedCatalog) return;
+  cachedCatalog = cachedCatalog.filter((p) => p.id !== productId);
 }
 
 function sortProductsNewestFirst(items: Product[]): Product[] {
@@ -96,10 +112,33 @@ export async function fetchFirestoreCatalog(forceRefresh = false): Promise<Produ
     return cachedCatalog;
   }
 
-  // 1. Try Admin SDK first (only when FIREBASE_SERVICE_ACCOUNT is configured)
-  if (hasAdminServiceAccount) {
+  if (!forceRefresh && inFlightCatalogPromise) {
+    return inFlightCatalogPromise;
+  }
+
+  const runFetch = async (): Promise<Product[]> => {
+    // 1. Try Admin SDK first (only when FIREBASE_SERVICE_ACCOUNT is configured)
+    if (hasAdminServiceAccount) {
+      try {
+        const snap = await withFirestoreTimeout(adminDb.collection('products').get(), 3500);
+        const items: Product[] = [];
+        snap.forEach((docSnap) => {
+          const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
+          if (normalized) items.push(normalized);
+        });
+        const sorted = sortProductsNewestFirst(items);
+        cachedCatalog = sorted;
+        cachedAt = Date.now();
+        lastFirestoreCatalogError = null;
+        return sorted;
+      } catch {
+        // Fall back to public-read Client SDK when Admin IAM is unavailable
+      }
+    }
+
+    // 2. Public-read Client SDK fallback (products has `allow read: if true` in firestore.rules)
     try {
-      const snap = await withFirestoreTimeout(adminDb.collection('products').get(), 8000);
+      const snap = await withFirestoreTimeout(getDocs(collection(clientDb, 'products')), 3800);
       const items: Product[] = [];
       snap.forEach((docSnap) => {
         const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
@@ -110,33 +149,24 @@ export async function fetchFirestoreCatalog(forceRefresh = false): Promise<Produ
       cachedAt = Date.now();
       lastFirestoreCatalogError = null;
       return sorted;
-    } catch {
-      // Fall back to public-read Client SDK when Admin IAM is unavailable
+    } catch (err: any) {
+      lastFirestoreCatalogError = err?.message || String(err);
+      if (String(lastFirestoreCatalogError).toLowerCase().includes('quota')) {
+        console.warn('[Firestore Catalog] Daily quota limit reached, serving fallback catalog:', lastFirestoreCatalogError);
+      } else {
+        console.error('[Firestore Catalog] Could not read Firestore products:', lastFirestoreCatalogError);
+      }
+      return cachedCatalog || [];
+    } finally {
+      inFlightCatalogPromise = null;
     }
-  }
+  };
 
-  // 2. Public-read Client SDK fallback (products has `allow read: if true` in firestore.rules)
-  try {
-    const snap = await withFirestoreTimeout(getDocs(collection(clientDb, 'products')), 12000);
-    const items: Product[] = [];
-    snap.forEach((docSnap) => {
-      const normalized = normalizeFirestoreProduct(docSnap.id, docSnap.data());
-      if (normalized) items.push(normalized);
-    });
-    const sorted = sortProductsNewestFirst(items);
-    cachedCatalog = sorted;
-    cachedAt = Date.now();
-    lastFirestoreCatalogError = null;
-    return sorted;
-  } catch (err: any) {
-    lastFirestoreCatalogError = err?.message || String(err);
-    if (String(lastFirestoreCatalogError).toLowerCase().includes('quota')) {
-      console.warn('[Firestore Catalog] Daily quota limit reached, serving fallback catalog:', lastFirestoreCatalogError);
-    } else {
-      console.error('[Firestore Catalog] Could not read Firestore products:', lastFirestoreCatalogError);
-    }
-    return cachedCatalog || [];
+  const promise = runFetch();
+  if (!forceRefresh) {
+    inFlightCatalogPromise = promise;
   }
+  return promise;
 }
 
 export async function fetchFirestoreProductById(productId: string): Promise<Product | null> {
@@ -203,11 +233,16 @@ export async function updateFirestoreProductStock(productId: string, newStock: n
 
 export async function syncFirestoreProduct(productId: string, payload: Record<string, any>): Promise<boolean> {
   if (!productId) return false;
-  invalidateFirestoreCatalogCache();
 
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    const normalized = normalizeFirestoreProduct(productId, payload);
+    if (normalized) {
+      upsertCachedCatalogProduct(normalized);
+    }
     return true;
   }
+
+  invalidateFirestoreCatalogCache();
 
   // 1. Try Admin SDK first only when explicit service account is configured (or try silently)
   if (hasAdminServiceAccount) {
@@ -237,11 +272,13 @@ export async function syncFirestoreProduct(productId: string, payload: Record<st
 
 export async function deleteFirestoreProduct(productId: string): Promise<boolean> {
   if (!productId) return false;
-  invalidateFirestoreCatalogCache();
 
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    removeCachedCatalogProduct(productId);
     return true;
   }
+
+  invalidateFirestoreCatalogCache();
 
   if (hasAdminServiceAccount) {
     try {

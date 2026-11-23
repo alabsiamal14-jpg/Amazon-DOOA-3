@@ -530,4 +530,126 @@ export interface EngineeringChatMessage {
   timestamp: string;
 }
 
+export type AccountingDirection = 'in' | 'out';
+
+export type AccountingPaymentChannel =
+  | 'نقد'
+  | 'حوالة الكريمي'
+  | 'تحويل بنكي'
+  | 'دفع عند الاستلام'
+  | 'بطاقة مدى / إلكتروني'
+  | 'رأس مال';
+
+export type AccountingReferenceType =
+  | 'order'
+  | 'sale'
+  | 'expense'
+  | 'supplier'
+  | 'stock_purchase'
+  | 'manual';
+
+export interface AccountingRates {
+  SAR: number;
+  YER_OLD: number;
+  YER_NEW: number;
+  USD: number;
+}
+
+export interface AccountingProduct {
+  id: string;
+  name: string;
+  vendorCode: string;
+  qty: number;
+  buyPriceSar: number;
+  shippingTotalSar: number;
+  landedCostSar: number;
+  sellPriceSar: number;
+  purchaseMode?: 'cash' | 'credit';
+  paymentChannel?: AccountingPaymentChannel;
+  supplierCode?: string;
+  referenceId?: string;
+  storeProductId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AccountingSale {
+  id: string;
+  txNumber?: string;
+  referenceId: string;
+  productId: string;
+  productName: string;
+  vendorCode: string;
+  qty: number;
+  unitPriceSar: number;
+  unitCostSar: number;
+  feesSar: number;
+  status: 'completed' | 'returned';
+  paymentChannel: AccountingPaymentChannel;
+  sourceParty?: string;
+  date: string;
+  note?: string;
+  createdAt: string;
+}
+
+export interface AccountingExpense {
+  id: string;
+  txNumber?: string;
+  referenceId: string;
+  title: string;
+  category: string;
+  amountSar: number;
+  paymentChannel: AccountingPaymentChannel;
+  sourceParty?: string;
+  date: string;
+  note?: string;
+  createdAt: string;
+}
+
+export interface AccountingSupplierTx {
+  id: string;
+  txNumber?: string;
+  referenceId: string;
+  code: string;
+  type: 'purchase' | 'payment';
+  amountSar: number;
+  paymentChannel?: AccountingPaymentChannel;
+  note: string;
+  date: string;
+  createdAt: string;
+}
+
+export interface AccountingLedgerEntry {
+  id: string;
+  tx_number: string;
+  date: string;
+  direction: AccountingDirection;
+  category: string;
+  reference_type: AccountingReferenceType;
+  reference_id: string;
+  source_party: string;
+  payment_channel: AccountingPaymentChannel;
+  amount_sar: number;
+  original_amount: number;
+  currency_code: string;
+  exchange_rate: number;
+  balance_after_sar: number;
+  notes: string;
+  linked_record_id?: string | null;
+  is_manual?: boolean;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface AccountingDatabaseState {
+  rates: AccountingRates;
+  products: AccountingProduct[];
+  sales: AccountingSale[];
+  expenses: AccountingExpense[];
+  suppliers: AccountingSupplierTx[];
+  ledger: AccountingLedgerEntry[];
+  updated_at: string;
+}
+
+
 

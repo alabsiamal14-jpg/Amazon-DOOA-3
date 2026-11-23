@@ -150,7 +150,6 @@ export async function upsertProduct(product: Partial<Product> & { id: string; ti
       createdAt: existing ? existing.createdAt : new Date(),
     };
     memoryOverrides.set(product.id, row);
-    invalidateFirestoreCatalogCache();
     return row;
   }
 
@@ -223,7 +222,6 @@ export async function deleteProductFromDb(productId: string) {
     const existing = await getProductById(productId);
     memoryDeletedIds.add(productId);
     memoryOverrides.delete(productId);
-    invalidateFirestoreCatalogCache();
     return existing;
   }
   try {

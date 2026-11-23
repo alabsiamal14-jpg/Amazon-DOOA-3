@@ -1,50 +1,104 @@
 import React from 'react';
-import { ShieldCheck, Truck, RotateCcw, Headphones } from 'lucide-react';
+import { ShieldCheck, Truck, RotateCcw, Award } from 'lucide-react';
+
+const badges = [
+  {
+    icon: ShieldCheck,
+    title: 'منتجات أصلية 100%',
+    desc: 'مستوردة ومعتمدة بأعلى المعايير',
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+  },
+  {
+    icon: Truck,
+    title: 'شحن سريع ومبرد',
+    desc: 'حفاظ تام على جودة المنتجات',
+    color: 'text-rose-600',
+    bg: 'bg-rose-50',
+  },
+  {
+    icon: RotateCcw,
+    title: 'استبدال واسترجاع سهل',
+    desc: 'خلال 7 أيام بكل مرونة',
+    color: 'text-amber-600',
+    bg: 'bg-amber-50',
+  },
+  {
+    icon: Award,
+    title: 'خدمة عملاء VIP',
+    desc: 'متابعة مباشرة عبر الواتساب',
+    color: 'text-indigo-600',
+    bg: 'bg-indigo-50',
+  },
+];
 
 export const TrustBadgesBar: React.FC = () => {
   return (
-    <div className="bg-gradient-to-r from-stone-100 via-rose-50/40 to-stone-100 border-y border-stone-200/80 py-8 my-8 shadow-2xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="flex items-center gap-3.5 p-4 bg-white rounded-2xl border border-stone-200/80 shadow-xs hover:shadow-md transition-all group">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <h4 className="font-black text-xs sm:text-sm text-stone-900">منتجات أصلية 100%</h4>
-            <p className="text-[11px] text-stone-500 mt-0.5">ضمان الجودة ومستوردة بمعايير عالمية</p>
-          </div>
+    <section className="my-12">
+      <div className="max-w-7xl mx-auto px-4">
+        <div className="text-center mb-8">
+          <span className="inline-block px-4 py-1 rounded-full bg-stone-100 text-stone-600 text-xs font-bold tracking-wider">
+            ✓ ضمان الجودة والثقة
+          </span>
+
+          <h2 className="mt-4 text-2xl md:text-3xl font-black text-stone-900">
+            تجربة تسوق استثنائية من البداية للنهاية
+          </h2>
+
+          <p className="mt-2 text-sm text-stone-500">
+            نلتزم بأعلى معايير الجودة والخدمة لضمان رضاك الكامل
+          </p>
         </div>
 
-        <div className="flex items-center gap-3.5 p-4 bg-white rounded-2xl border border-stone-200/80 shadow-xs hover:shadow-md transition-all group">
-          <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-            <Truck className="w-6 h-6" />
-          </div>
-          <div>
-            <h4 className="font-black text-xs sm:text-sm text-stone-900">شحن سريع ومبرد</h4>
-            <p className="text-[11px] text-stone-500 mt-0.5">توصيل آمن لجميع المدن والمحافظات</p>
-          </div>
-        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+          {badges.map((item, index) => {
+            const Icon = item.icon;
 
-        <div className="flex items-center gap-3.5 p-4 bg-white rounded-2xl border border-stone-200/80 shadow-xs hover:shadow-md transition-all group">
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-            <RotateCcw className="w-6 h-6" />
-          </div>
-          <div>
-            <h4 className="font-black text-xs sm:text-sm text-stone-900">استبدال واسترجاع مرن</h4>
-            <p className="text-[11px] text-stone-500 mt-0.5">ضمان استرداد الأموال خلال 7 أيام</p>
-          </div>
-        </div>
+            return (
+              <div
+                key={index}
+                className="
+                  group
+                  relative
+                  overflow-hidden
+                  rounded-3xl
+                  bg-white
+                  border border-stone-200/70
+                  p-5
+                  text-center
+                  shadow-[0_8px_30px_rgba(0,0,0,0.05)]
+                  transition-all
+                  duration-300
+                  hover:-translate-y-2
+                  hover:shadow-[0_20px_50px_rgba(0,0,0,0.10)]
+                "
+              >
+                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-stone-300 to-transparent" />
 
-        <div className="flex items-center gap-3.5 p-4 bg-white rounded-2xl border border-stone-200/80 shadow-xs hover:shadow-md transition-all group">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-            <Headphones className="w-6 h-6" />
-          </div>
-          <div>
-            <h4 className="font-black text-xs sm:text-sm text-stone-900">خدمة عملاء VIP</h4>
-            <p className="text-[11px] text-stone-500 mt-0.5">دعم فوري ومباشر عبر واتساب</p>
-          </div>
+                <div
+                  className={`
+                    ${item.bg}
+                    mx-auto mb-4
+                    flex h-14 w-14 items-center justify-center
+                    rounded-2xl
+                    transition-transform duration-300 group-hover:scale-105
+                  `}
+                >
+                  <Icon className={`h-7 w-7 ${item.color}`} />
+                </div>
+
+                <h4 className="font-black text-sm text-stone-900 mb-2">
+                  {item.title}
+                </h4>
+
+                <p className="text-xs leading-6 text-stone-500">
+                  {item.desc}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </div>
-    </div>
+    </section>
   );
 };

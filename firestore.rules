@@ -211,5 +211,97 @@ service cloud.firestore {
       allow get, list: if isAdmin();
       allow create, update, delete: if isValidId(draftId) && isAdmin();
     }
+
+    // Accounting & Financial Audit System: محصورة بالكامل بالمدير (isAdmin) مع التحقق الصارم من الحقول
+    match /accounting_products/{docId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'name', 'vendorCode', 'qty', 'landedCostSar', 'sellPriceSar', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 250
+        && request.resource.data.qty is number
+        && request.resource.data.qty >= 0
+        && request.resource.data.landedCostSar is number
+        && request.resource.data.landedCostSar >= 0
+        && request.resource.data.sellPriceSar is number
+        && request.resource.data.sellPriceSar >= 0;
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /accounting_sales/{docId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'referenceId', 'productName', 'qty', 'unitPriceSar', 'status', 'date', 'createdAt'])
+        && request.resource.data.referenceId is string
+        && request.resource.data.referenceId.size() > 0
+        && request.resource.data.referenceId.size() <= 120
+        && request.resource.data.qty is number
+        && request.resource.data.qty > 0
+        && request.resource.data.unitPriceSar is number
+        && request.resource.data.unitPriceSar >= 0
+        && request.resource.data.status in ['completed', 'returned'];
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /accounting_expenses/{docId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'referenceId', 'title', 'category', 'amountSar', 'date', 'createdAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 250
+        && request.resource.data.amountSar is number
+        && request.resource.data.amountSar > 0;
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /accounting_suppliers/{docId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'referenceId', 'code', 'type', 'amountSar', 'date', 'createdAt'])
+        && request.resource.data.code is string
+        && request.resource.data.code.size() > 0
+        && request.resource.data.code.size() <= 120
+        && request.resource.data.type in ['purchase', 'payment']
+        && request.resource.data.amountSar is number
+        && request.resource.data.amountSar > 0;
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /accounting_ledger/{docId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.keys().hasAll([
+          'id', 'tx_number', 'date', 'direction', 'category',
+          'reference_type', 'reference_id', 'source_party',
+          'payment_channel', 'amount_sar', 'created_at'
+        ])
+        && request.resource.data.tx_number is string
+        && request.resource.data.tx_number.size() > 0
+        && request.resource.data.tx_number.size() <= 64
+        && request.resource.data.direction in ['in', 'out']
+        && request.resource.data.reference_type in ['order', 'sale', 'expense', 'supplier', 'stock_purchase', 'manual']
+        && request.resource.data.reference_id is string
+        && request.resource.data.reference_id.size() > 0
+        && request.resource.data.reference_id.size() <= 120
+        && request.resource.data.source_party is string
+        && request.resource.data.source_party.size() > 0
+        && request.resource.data.source_party.size() <= 200
+        && request.resource.data.amount_sar is number
+        && request.resource.data.amount_sar > 0;
+      allow update: if isValidId(docId)
+        && isAdmin()
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.tx_number == resource.data.tx_number
+        && request.resource.data.amount_sar is number
+        && request.resource.data.amount_sar > 0;
+      allow delete: if isValidId(docId) && isAdmin();
+    }
   }
 }

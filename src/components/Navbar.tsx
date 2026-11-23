@@ -1,9 +1,72 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, Lock, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, LogIn, ChevronDown, Flame, MapPin, Bot, Coins } from 'lucide-react';
-import { StoreSettings, AdminUser, Product, UserProfile } from '../types';
+import { Sparkles, ShoppingBag, SlidersHorizontal, Store, Code, Code2, ShieldCheck, Package, Cloud, LogOut, CreditCard, Search, X, Heart, Truck, User as UserIcon, ChevronDown, Flame, MapPin, Bot, Coins } from 'lucide-react';
+import { StoreSettings, AdminUser, Product, UserProfile, EmployeeSession } from '../types';
 import { env } from '../lib/env';
 import { SmartSearchBar } from './SmartSearchBar';
 import { formatCurrency, getActiveCurrencyCode, getEffectiveCurrencies } from '../lib/currency';
+import { getEmployeeSession } from '../lib/storage';
+
+const VERIFIED_ADMIN_ROLES = new Set<AdminUser['role']>(['superadmin', 'manager', 'editor']);
+
+export interface HeaderPermissions {
+  isAdmin: boolean;
+  isStaff: boolean;
+  isEmployee: boolean;
+  isDriver: boolean;
+  canViewAdminOrders: boolean;
+  canViewDriverPortal: boolean;
+  canViewEmployeeAssistant: boolean;
+  canViewAdminDashboard: boolean;
+  canViewStaffDashboard: boolean;
+  canViewDevAdvisor: boolean;
+  canViewAdminLogout: boolean;
+  canViewDeployDocs: boolean;
+}
+
+export function resolveHeaderPermissions(params: {
+  adminUser: AdminUser | null;
+  currentUser?: UserProfile | null;
+  employeeSession?: EmployeeSession | null;
+}): HeaderPermissions {
+  const { adminUser, currentUser, employeeSession } = params;
+
+  const hasValidAdminObject = Boolean(
+    adminUser &&
+      typeof adminUser.id === 'string' &&
+      adminUser.id.trim() !== '' &&
+      typeof adminUser.username === 'string' &&
+      adminUser.username.trim() !== '' &&
+      VERIFIED_ADMIN_ROLES.has(adminUser.role)
+  );
+
+  const isFirebaseAdmin = currentUser?.role === 'admin';
+  const isAdmin = hasValidAdminObject || isFirebaseAdmin;
+  const isStaff = currentUser?.role === 'staff';
+  const isDriver = currentUser?.role === 'driver';
+  const isEmployee = Boolean(
+    employeeSession &&
+      employeeSession.role === 'employee' &&
+      typeof employeeSession.code === 'string' &&
+      employeeSession.code.trim() !== '' &&
+      typeof employeeSession.token === 'string' &&
+      employeeSession.token.trim() !== ''
+  );
+
+  return {
+    isAdmin,
+    isStaff,
+    isEmployee,
+    isDriver,
+    canViewAdminOrders: isAdmin,
+    canViewDriverPortal: isAdmin || isDriver,
+    canViewEmployeeAssistant: isAdmin || isEmployee,
+    canViewAdminDashboard: isAdmin,
+    canViewStaffDashboard: !isAdmin && isStaff,
+    canViewDevAdvisor: isAdmin,
+    canViewAdminLogout: Boolean(hasValidAdminObject && isAdmin),
+    canViewDeployDocs: isAdmin,
+  };
+}
 
 interface NavbarProps {
   activeTab: 'store' | 'admin' | 'orders' | 'checkout' | 'product-detail' | 'dev-advisor' | 'track-order' | 'branches' | 'driver' | 'employee-assistant';
@@ -24,6 +87,7 @@ interface NavbarProps {
   onAddToCart: (product: Product, quantity?: number) => void;
   onSearchSubmit: (query: string) => void;
   currentUser?: UserProfile | null;
+  employeeSession?: EmployeeSession | null;
   onOpenAuthModal?: () => void;
   onLogoutUser?: () => void;
 }
@@ -47,13 +111,26 @@ export const Navbar: React.FC<NavbarProps> = ({
   onAddToCart,
   onSearchSubmit,
   currentUser,
+  employeeSession,
   onOpenAuthModal,
   onLogoutUser,
 }) => {
   const isCloud = env.isSupabaseConfigured();
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [storedEmployeeSession, setStoredEmployeeSession] = useState<EmployeeSession | null>(() =>
+    getEmployeeSession()
+  );
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  const effectiveEmployeeSession =
+    employeeSession !== undefined ? employeeSession : storedEmployeeSession;
+
+  const permissions = resolveHeaderPermissions({
+    adminUser,
+    currentUser,
+    employeeSession: effectiveEmployeeSession,
+  });
 
   const currenciesMap = getEffectiveCurrencies(settings);
   const activeCurrencyCode = getActiveCurrencyCode(settings);
@@ -69,12 +146,23 @@ export const Navbar: React.FC<NavbarProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (employeeSession !== undefined) return;
+    const syncEmployeeSession = () => setStoredEmployeeSession(getEmployeeSession());
+    window.addEventListener('amazon-duaa-employee-session-changed', syncEmployeeSession);
+    window.addEventListener('storage', syncEmployeeSession);
+    return () => {
+      window.removeEventListener('amazon-duaa-employee-session-changed', syncEmployeeSession);
+      window.removeEventListener('storage', syncEmployeeSession);
+    };
+  }, [employeeSession]);
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-rose-100 shadow-xs">
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-stone-900 via-rose-950 to-stone-900 text-rose-100 text-xs py-2 px-4 text-center flex items-center justify-between font-medium">
         <div className="hidden sm:flex items-center gap-2">
-          {adminUser ? (
+          {permissions.isAdmin ? (
             <>
               <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30 text-[10px]">
                 <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
@@ -152,8 +240,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               {isMobileSearchOpen ? <X className="w-4 h-4 sm:w-5 sm:h-5" /> : <Search className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
 
-            {/* Admin Logout button if logged in (desktop shortcut) */}
-            {adminUser && (
+            {/* Admin Logout button if logged in with verified admin role (desktop shortcut) */}
+            {permissions.canViewAdminLogout && (
               <button
                 onClick={onLogoutAdmin}
                 title="تسجيل خروج الإدارة"
@@ -164,8 +252,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Developer Deployment Code Modal (Admin only) */}
-            {adminUser && (
+            {/* Developer Deployment Code Modal (Verified Admin only) */}
+            {permissions.canViewDeployDocs && (
               <button
                 onClick={onOpenDocs}
                 title="كود Supabase و Edge Function جاهز للنسخ"
@@ -210,18 +298,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* Admin/Staff Login Shortcut */}
-            {!adminUser && (
-              <button
-                onClick={() => setActiveTab('admin')}
-                className="hidden md:flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-2xl border border-stone-800 shadow-2xs transition-all hover:shadow-xs active:scale-95 cursor-pointer text-[11px] font-black"
-                title="تسجيل دخول الإدارة والموظفين"
-              >
-                <Lock className="w-3.5 h-3.5 text-rose-400" />
-                <span>دخول الإدارة</span>
-              </button>
-            )}
-
             {/* User Account / Auth Trigger */}
             {currentUser ? (
               <div className="relative" ref={userMenuRef}>
@@ -240,7 +316,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <span className="hidden lg:inline text-xs font-bold max-w-[90px] truncate">
                     {currentUser.name || 'حسابي'}
                   </span>
-                  {currentUser.role === 'admin' && (
+                  {permissions.isAdmin && (
                     <span className="hidden sm:inline bg-rose-100 text-rose-700 text-[9px] px-1.5 py-0.2 rounded font-black">
                       مشرف
                     </span>
@@ -262,7 +338,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                     <button
                       onClick={() => {
-                        setActiveTab('orders');
+                        setActiveTab('track-order');
                         setIsUserMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-rose-50 hover:text-rose-600 rounded-xl transition-colors cursor-pointer"
@@ -282,7 +358,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <span>قائمة المفضلة</span>
                     </button>
 
-                    {currentUser.role === 'admin' && (
+                    {permissions.canViewAdminDashboard && (
                       <button
                         onClick={() => {
                           setActiveTab('admin');
@@ -295,16 +371,57 @@ export const Navbar: React.FC<NavbarProps> = ({
                       </button>
                     )}
 
-                    <button
-                      onClick={() => {
-                        setActiveTab('driver');
-                        setIsUserMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
-                    >
-                      <Truck className="w-4 h-4 text-amber-600" />
-                      <span>بوابة مندوب التوصيل 🛵</span>
-                    </button>
+                    {permissions.canViewAdminOrders && (
+                      <button
+                        onClick={() => {
+                          setActiveTab('orders');
+                          setIsUserMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Package className="w-4 h-4 text-stone-500" />
+                        <span>الطلبات الإدارية</span>
+                      </button>
+                    )}
+
+                    {permissions.canViewStaffDashboard && (
+                      <button
+                        onClick={() => {
+                          setActiveTab('admin');
+                          setIsUserMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <SlidersHorizontal className="w-4 h-4 text-rose-500" />
+                        <span>بوابة الموظف</span>
+                      </button>
+                    )}
+
+                    {permissions.canViewEmployeeAssistant && (
+                      <button
+                        onClick={() => {
+                          setActiveTab('employee-assistant');
+                          setIsUserMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Bot className="w-4 h-4 text-rose-600" />
+                        <span>مساعد الموظفين 🤖</span>
+                      </button>
+                    )}
+
+                    {permissions.canViewDriverPortal && (
+                      <button
+                        onClick={() => {
+                          setActiveTab('driver');
+                          setIsUserMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Truck className="w-4 h-4 text-amber-600" />
+                        <span>بوابة مندوب التوصيل 🛵</span>
+                      </button>
+                    )}
 
                     <div className="border-t border-stone-100 my-1"></div>
 
@@ -408,81 +525,104 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
-              activeTab === 'orders'
-                ? 'bg-rose-600 text-white shadow-xs font-bold'
-                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-            }`}
-          >
-            <Package className="w-3.5 h-3.5" />
-            <span>الطلبات</span>
-            {ordersCount > 0 && (
-              <span className={`text-[10px] px-1.5 rounded-full font-bold ${activeTab === 'orders' ? 'bg-white text-rose-600' : 'bg-rose-600 text-white'}`}>
-                {ordersCount}
-              </span>
-            )}
-          </button>
+          {permissions.canViewAdminOrders && (
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
+                activeTab === 'orders'
+                  ? 'bg-rose-600 text-white shadow-xs font-bold'
+                  : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              }`}
+            >
+              <Package className="w-3.5 h-3.5" />
+              <span>الطلبات</span>
+              {ordersCount > 0 && (
+                <span className={`text-[10px] px-1.5 rounded-full font-bold ${activeTab === 'orders' ? 'bg-white text-rose-600' : 'bg-rose-600 text-white'}`}>
+                  {ordersCount}
+                </span>
+              )}
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('driver')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
-              activeTab === 'driver'
-                ? 'bg-amber-500 text-stone-950 shadow-xs font-black'
-                : 'bg-amber-50 text-amber-800 border border-amber-200'
-            }`}
-          >
-            <Truck className={`w-3.5 h-3.5 ${activeTab === 'driver' ? 'text-stone-950' : 'text-amber-600'}`} />
-            <span>المندوب 🛵</span>
-          </button>
+          {permissions.canViewDriverPortal && (
+            <button
+              onClick={() => setActiveTab('driver')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
+                activeTab === 'driver'
+                  ? 'bg-amber-500 text-stone-950 shadow-xs font-black'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200'
+              }`}
+            >
+              <Truck className={`w-3.5 h-3.5 ${activeTab === 'driver' ? 'text-stone-950' : 'text-amber-600'}`} />
+              <span>المندوب 🛵</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('employee-assistant')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all cursor-pointer ${
-              activeTab === 'employee-assistant'
-                ? 'bg-rose-600 text-white shadow-xs font-black'
-                : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
-            }`}
-          >
-            <Bot className={`w-3.5 h-3.5 ${activeTab === 'employee-assistant' ? 'text-white' : 'text-rose-600'}`} />
-            <span>مساعد الموظفين 🤖</span>
-          </button>
+          {permissions.canViewEmployeeAssistant && (
+            <button
+              onClick={() => setActiveTab('employee-assistant')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all cursor-pointer ${
+                activeTab === 'employee-assistant'
+                  ? 'bg-rose-600 text-white shadow-xs font-black'
+                  : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <Bot className={`w-3.5 h-3.5 ${activeTab === 'employee-assistant' ? 'text-white' : 'text-rose-600'}`} />
+              <span>مساعد الموظفين 🤖</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('admin')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
-              activeTab === 'admin'
-                ? 'bg-stone-900 text-white shadow-xs font-bold'
-                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>لوحة التحكم</span>
-          </button>
+          {permissions.canViewAdminDashboard && (
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
+                activeTab === 'admin'
+                  ? 'bg-stone-900 text-white shadow-xs font-bold'
+                  : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>لوحة التحكم</span>
+            </button>
+          )}
 
-          {adminUser && (
-            <>
-              <button
-                onClick={() => setActiveTab('dev-advisor')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
-                  activeTab === 'dev-advisor'
-                    ? 'bg-indigo-600 text-white shadow-xs font-bold'
-                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                }`}
-              >
-                <Code2 className="w-3.5 h-3.5" />
-                <span>المستشار البرمجي</span>
-              </button>
-              <button
-                onClick={onLogoutAdmin}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl shrink-0 bg-rose-50 text-rose-600 border border-rose-200"
-                title="تسجيل خروج الإدارة"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>خروج الإدارة</span>
-              </button>
-            </>
+          {permissions.canViewStaffDashboard && (
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
+                activeTab === 'admin'
+                  ? 'bg-rose-600 text-white shadow-xs font-bold'
+                  : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>بوابة الموظف</span>
+            </button>
+          )}
+
+          {permissions.canViewDevAdvisor && (
+            <button
+              onClick={() => setActiveTab('dev-advisor')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 transition-all ${
+                activeTab === 'dev-advisor'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                  : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>المستشار البرمجي</span>
+            </button>
+          )}
+
+          {permissions.canViewAdminLogout && (
+            <button
+              onClick={onLogoutAdmin}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl shrink-0 bg-rose-50 text-rose-600 border border-rose-200"
+              title="تسجيل خروج الإدارة"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>خروج الإدارة</span>
+            </button>
           )}
         </nav>
 

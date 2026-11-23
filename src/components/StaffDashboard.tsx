@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import { 
   Sparkles, 
   Plus, 
@@ -13,7 +13,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Category, Product, StoreSettings, UserProfile } from '../types';
-import { AdminProductForm } from './AdminProductForm';
+import { AdminProductForm } from '../lib/lazyImports';
 import { INITIAL_CATEGORIES } from '../data/initialData';
 
 interface StaffDashboardProps {
@@ -144,13 +144,15 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({
               </div>
             </div>
             
-            <AdminProductForm
-              categories={INITIAL_CATEGORIES}
-              onProductCreated={onProductCreated}
-              onProductsCreated={onProductsCreated}
-              settings={settings}
-              currentUser={currentUser}
-            />
+            <Suspense fallback={<div className="p-8 text-center text-sm font-bold text-stone-500">جاري تحميل نموذج المنتجات...</div>}>
+              <AdminProductForm
+                categories={INITIAL_CATEGORIES}
+                onProductCreated={onProductCreated}
+                onProductsCreated={onProductsCreated}
+                settings={settings}
+                currentUser={currentUser}
+              />
+            </Suspense>
           </div>
         ) : (
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200 shadow-sm">

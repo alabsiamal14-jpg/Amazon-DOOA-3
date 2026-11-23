@@ -1,6 +1,7 @@
-import {createRoot} from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
-import {ErrorBoundary} from './components/ErrorBoundary.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { registerServiceWorker } from './serviceWorker.ts';
 import './index.css';
 
 // Gracefully handle and down-rank non-fatal third-party Firestore idle stream notices
@@ -43,11 +44,9 @@ console.warn = function (...args) {
   originalWarn.apply(console, args);
 };
 
-if ('serviceWorker' in navigator && process.env.NODE_ENV !== 'development') {
+if (typeof window !== 'undefined') {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.warn('Service worker registration failed:', err);
-    });
+    void registerServiceWorker();
   });
 }
 

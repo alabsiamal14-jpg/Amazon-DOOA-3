@@ -1,34 +1,43 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
-  Sparkles,
-  Search,
-  SlidersHorizontal,
-  ArrowUpDown,
-  ShieldCheck,
-  Truck,
-  Gift,
-  MessageCircle,
-  X,
-  Tag,
-  Hash,
-  Filter,
-  Waves,
-  Flame,
-  Palette,
-  Heart,
-  Zap,
-  Smartphone,
-  Watch,
-  Home,
-  Baby,
   Activity,
-  Layers,
+  ArrowUpDown,
+  Baby,
+  Check,
   ChevronLeft,
-  Plus
+  Crown,
+  Filter,
+  Flame,
+  Hash,
+  Heart,
+  Home,
+  Layers,
+  LayoutGrid,
+  MessageCircle,
+  Palette,
+  Percent,
+  Plus,
+  RotateCcw,
+  Rows3,
+  Search,
+  Smartphone,
+  Sparkles,
+  Tag,
+  Watch,
+  Waves,
+  X,
+  Zap,
 } from 'lucide-react';
 import { Category, Product, StoreSettings } from '../types';
 import { ProductCard } from './ProductCard';
 import { searchProducts } from '../lib/search';
+import {
+  buildStorefrontShelves,
+  deriveEffectiveCategories,
+  extractScopedSubTags,
+  partitionBentoCategories,
+  resolveCategoryBackgroundImage,
+} from '../lib/storefront';
 import { TrustBadgesBar } from './TrustBadgesBar';
 
 import heroImg from '../assets/images/amazon_duaa_beauty_hero_1795377864380.jpg';
@@ -39,28 +48,45 @@ import catHaircareImg from '../assets/images/category_haircare_1795377865544.jpg
 
 export const getCategoryIconComponent = (iconName?: string) => {
   switch (iconName) {
-    case 'Sparkles': return Sparkles;
-    case 'Waves': return Waves;
-    case 'Flame': return Flame;
-    case 'Palette': return Palette;
-    case 'Heart': return Heart;
-    case 'Zap': return Zap;
-    case 'Smartphone': return Smartphone;
-    case 'Watch': return Watch;
-    case 'Home': return Home;
-    case 'Baby': return Baby;
-    case 'Activity': return Activity;
-    default: return Tag;
+    case 'Sparkles':
+      return Sparkles;
+    case 'Waves':
+      return Waves;
+    case 'Flame':
+      return Flame;
+    case 'Palette':
+      return Palette;
+    case 'Heart':
+      return Heart;
+    case 'Zap':
+      return Zap;
+    case 'Smartphone':
+      return Smartphone;
+    case 'Watch':
+      return Watch;
+    case 'Home':
+      return Home;
+    case 'Baby':
+      return Baby;
+    case 'Activity':
+      return Activity;
+    default:
+      return Tag;
   }
 };
 
 const getCategoryLocalImage = (catId: string, defaultImage?: string) => {
   switch (catId) {
-    case 'skincare': return catSkincareImg;
-    case 'perfumes': return catPerfumesImg;
-    case 'makeup': return catMakeupImg;
-    case 'haircare': return catHaircareImg;
-    default: return defaultImage;
+    case 'skincare':
+      return catSkincareImg;
+    case 'perfumes':
+      return catPerfumesImg;
+    case 'makeup':
+      return catMakeupImg;
+    case 'haircare':
+      return catHaircareImg;
+    default:
+      return defaultImage;
   }
 };
 
@@ -95,12 +121,19 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
   onSearchQueryChange,
   onOpenPublicAddProduct,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Multi-select categories: empty array means "الكل" (All Storefront)
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [internalSearch, setInternalSearch] = useState('');
-  const [sortBy, setSortBy] = useState<'featured' | 'newest' | 'price-low' | 'price-high' | 'discount'>('featured');
+  const [sortBy, setSortBy] = useState<
+    'featured' | 'newest' | 'price-low' | 'price-high' | 'discount'
+  >('featured');
+  const [viewMode, setViewMode] = useState<'shelves' | 'grid'>('shelves');
 
-  const activeQuery = searchQuery !== undefined && onSearchQueryChange ? searchQuery : internalSearch;
+  const productsTopRef = useRef<HTMLDivElement | null>(null);
+
+  const activeQuery =
+    searchQuery !== undefined && onSearchQueryChange ? searchQuery : internalSearch;
 
   const handleQueryChange = (val: string) => {
     if (onSearchQueryChange) {
@@ -110,60 +143,74 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
     }
   };
 
-  const handleCategorySelect = (catId: string) => {
-    setSelectedCategory(catId);
-    if (selectedTag !== 'all') {
-      const targetProducts = catId === 'all' ? products : products.filter((p) => p.category_id === catId);
-      const tagExists = targetProducts.some((p) => p.tags && Array.isArray(p.tags) && p.tags.includes(selectedTag));
-      if (!tagExists) {
-        setSelectedTag('all');
+  // Preserve real Firebase categories and include any extra categories found on live products
+  const effectiveCategories = useMemo(
+    () => deriveEffectiveCategories(categories, products),
+    [categories, products]
+  );
+
+  // Partition into top 2 prominent Bento cards + remaining categories using real DB counts
+  const { featuredTwo, rest: restCategories, countMap } = useMemo(
+    () => partitionBentoCategories(effectiveCategories, products),
+    [effectiveCategories, products]
+  );
+
+  const resolveCategoryImage = (cat: Category): string | undefined =>
+    resolveCategoryBackgroundImage(cat, products, getCategoryLocalImage(cat.id));
+
+  const resolveCategoryFallbackImage = (cat: Category): string | undefined =>
+    resolveCategoryBackgroundImage(
+      { id: cat.id, name_ar: cat.name_ar, image: undefined },
+      products,
+      getCategoryLocalImage(cat.id)
+    );
+
+  const handleToggleCategory = (catId: string) => {
+    setSelectedCategories((prev) => {
+      const next = prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId];
+      if (selectedTag !== 'all') {
+        const scoped =
+          next.length === 0 ? products : products.filter((p) => next.includes(p.category_id));
+        const stillExists = scoped.some(
+          (p) => Array.isArray(p.tags) && p.tags.includes(selectedTag)
+        );
+        if (!stillExists) setSelectedTag('all');
       }
-    }
+      return next;
+    });
   };
 
-  // Extract available tags dynamically from products (scoped to selected category or overall)
-  const availableTags = useMemo(() => {
-    const targetProducts = selectedCategory === 'all'
-      ? products
-      : products.filter((p) => p.category_id === selectedCategory);
+  const handleClearSelection = () => {
+    setSelectedCategories([]);
+    setSelectedTag('all');
+  };
 
-    const tagMap = new Map<string, number>();
-    targetProducts.forEach((p) => {
-      if (Array.isArray(p.tags)) {
-        p.tags.forEach((rawTag) => {
-          const clean = rawTag.trim();
-          if (clean) {
-            tagMap.set(clean, (tagMap.get(clean) || 0) + 1);
-          }
-        });
-      }
-    });
+  const scrollToCatalog = () => {
+    productsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
-    return Array.from(tagMap.entries())
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [products, selectedCategory]);
+  // Dynamic sub-categories extracted ONLY from products inside selected categories
+  const availableSubTags = useMemo(() => {
+    if (selectedCategories.length === 0) return [];
+    return extractScopedSubTags(products, selectedCategories);
+  }, [products, selectedCategories]);
 
-  // Filter & Sort using Semantic Search Engine, Category Filter, and Tag Filter
+  // Multi-category + sub-tag + semantic search filtering & sorting
   const filteredProducts = useMemo(() => {
     let list = [...products];
 
-    // Category filter
-    if (selectedCategory !== 'all') {
-      list = list.filter((p) => p.category_id === selectedCategory);
+    if (selectedCategories.length > 0) {
+      list = list.filter((p) => selectedCategories.includes(p.category_id));
     }
 
-    // Tag filter (works in conjunction with category)
     if (selectedTag !== 'all') {
-      list = list.filter((p) => p.tags && Array.isArray(p.tags) && p.tags.includes(selectedTag));
+      list = list.filter((p) => Array.isArray(p.tags) && p.tags.includes(selectedTag));
     }
 
-    // Semantic & Text Search
     if (activeQuery.trim()) {
       const searchMatches = searchProducts(list, activeQuery);
       list = searchMatches.map((m) => m.product);
     } else {
-      // Sorting when not actively ranked by search relevance
       list.sort((a, b) => {
         const priceA = a.discount_price ?? a.original_price;
         const priceB = b.discount_price ?? b.original_price;
@@ -194,13 +241,22 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
     }
 
     return list;
-  }, [products, selectedCategory, selectedTag, activeQuery, sortBy]);
+  }, [products, selectedCategories, selectedTag, activeQuery, sortBy]);
+
+  // Multi-shelf catalog shown in "الكل" mode when Shelves view is active and no search/sub-tag filter narrows results
+  const shelves = useMemo(
+    () => buildStorefrontShelves(products, effectiveCategories, 4),
+    [products, effectiveCategories]
+  );
+
+  const isAllMode = selectedCategories.length === 0;
+  const shouldShowShelves =
+    isAllMode && selectedTag === 'all' && !activeQuery.trim() && viewMode === 'shelves';
 
   return (
     <div className="pb-20">
-      {/* Immersive Luxury Hero Banner (Sephora / Ulta Beauty Style) */}
+      {/* Immersive Luxury Hero Banner */}
       <section className="relative overflow-hidden bg-stone-950 text-white py-16 sm:py-24 px-4 sm:px-8 lg:px-12 mb-10 rounded-3xl mx-4 sm:mx-6 lg:mx-8 shadow-2xl mt-4 border border-stone-800">
-        {/* Background Image with High-End Dark Gradient Overlay */}
         <div className="absolute inset-0 z-0">
           <img
             src={heroImg}
@@ -210,7 +266,6 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
           <div className="absolute inset-0 bg-gradient-to-r from-stone-950 via-stone-950/90 to-rose-950/70" />
         </div>
 
-        {/* Ambient Glow Effects */}
         <div className="absolute -top-32 -left-32 w-96 h-96 bg-rose-600/25 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
 
@@ -269,214 +324,337 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
       <TrustBadgesBar />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Luxury Visual Department Showcase */}
-        <div className="mb-10 bg-white p-5 sm:p-8 rounded-3xl border border-stone-200/90 shadow-sm">
-          <div className="flex items-center justify-between gap-3 mb-6">
+        {/* Luxury Bento Department Showcase (Replaces 11-col grid & duplicate pills bar) */}
+        <section
+          aria-label="أقسام أمازون دعاء الفاخرة"
+          className="mb-8 bg-white p-5 sm:p-7 rounded-3xl border border-stone-200/90 shadow-xs space-y-4 overflow-hidden"
+        >
+          {/* Header + Clear Selection */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold shadow-inner">
+              <div className="w-10 h-10 rounded-2xl bg-stone-900 text-amber-300 flex items-center justify-center shadow-xs">
                 <Layers className="w-5 h-5" />
               </div>
               <div>
                 <h2 className="text-base sm:text-lg font-black text-stone-900">
-                  أقسام أمازون دعاء الفاخرة ({categories.length} أقسام رئيسية)
+                  أقسام أمازون دعاء الفاخرة ({effectiveCategories.length} أقسام رئيسية)
                 </h2>
                 <p className="text-xs text-stone-500">
-                  تصفحي التصنيفات العالمية وانتقلي فوراً إلى تشكيلات العناية والجمال
+                  اختاري قسماً واحداً أو حددي عدة أقسام معاً لتصفح تشكيلاتك المفضلة في مكان واحد
                 </p>
               </div>
             </div>
-            {selectedCategory !== 'all' && (
+
+            {selectedCategories.length > 0 && (
               <button
-                onClick={() => handleCategorySelect('all')}
-                className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                type="button"
+                onClick={handleClearSelection}
+                className="text-xs font-extrabold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
               >
-                <span>عرض كافة الأقسام</span>
-                <ChevronLeft className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>مسح التحديد ({selectedCategories.length})</span>
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-3">
-            {/* All button circular card */}
-            <button
-              onClick={() => handleCategorySelect('all')}
-              className={`group flex flex-col items-center p-3 rounded-2xl transition-all text-center border cursor-pointer ${
-                selectedCategory === 'all'
-                  ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                  : 'bg-stone-50 hover:bg-rose-50/60 border-stone-200 text-stone-700'
-              }`}
-            >
+          {/* Card 0: Prominent "الكل" Storewide Anchor Card */}
+          <button
+            type="button"
+            onClick={handleClearSelection}
+            className={`w-full flex items-center justify-between gap-4 px-5 py-3.5 rounded-2xl border transition-all cursor-pointer text-right ${
+              isAllMode
+                ? 'bg-stone-950 text-white border-2 border-amber-400 ring-2 ring-amber-400/30 shadow-md'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-800 border-stone-200'
+            }`}
+          >
+            <div className="flex items-center gap-3">
               <div
-                className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 transition-transform group-hover:scale-105 shadow-xs ${
-                  selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-600'
+                className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  isAllMode ? 'bg-amber-400 text-stone-950' : 'bg-white border border-stone-200 text-stone-700'
                 }`}
               >
-                <Sparkles className="w-6 h-6" />
+                <Sparkles className="w-5 h-5" />
               </div>
-              <span className="text-xs font-black line-clamp-1">الكل</span>
-              <span className={`text-[10px] font-bold ${selectedCategory === 'all' ? 'text-white/80' : 'text-stone-400'}`}>
+              <div>
+                <div className="text-sm font-black">الكل — كامل متجر أمازون دعاء</div>
+                <div className={`text-[11px] font-medium ${isAllMode ? 'text-stone-300' : 'text-stone-500'}`}>
+                  عرض جميع الأقسام والتشكيلات الأصلية المتوفرة
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span
+                className={`text-xs font-black px-3 py-1 rounded-xl tabular-nums ${
+                  isAllMode ? 'bg-white/15 text-amber-200' : 'bg-white border border-stone-200 text-stone-700'
+                }`}
+              >
                 {products.length} منتج
               </span>
-            </button>
+              {isAllMode && (
+                <span className="w-6 h-6 rounded-full bg-amber-400 text-stone-950 flex items-center justify-center shadow-xs">
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                </span>
+              )}
+            </div>
+          </button>
 
-            {/* Each Category */}
-            {categories.map((cat) => {
+          {/* Top Row: 2 Large Featured Bento Department Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 overflow-hidden p-1.5 -m-1.5">
+            {featuredTwo.map((cat) => {
               const IconComp = getCategoryIconComponent(cat.icon);
-              const count = products.filter((p) => p.category_id === cat.id).length;
-              const isSelected = selectedCategory === cat.id;
-              const localImg = getCategoryLocalImage(cat.id, cat.image);
+              const count = countMap.get(cat.id) || 0;
+              const isSelected = selectedCategories.includes(cat.id);
+              const bgImage = resolveCategoryImage(cat);
 
               return (
                 <button
                   key={cat.id}
-                  onClick={() => handleCategorySelect(cat.id)}
-                  className={`group relative flex flex-col items-center p-2.5 rounded-2xl transition-all text-center border cursor-pointer ${
+                  type="button"
+                  onClick={() => handleToggleCategory(cat.id)}
+                  aria-pressed={isSelected}
+                  title={`${cat.name_ar} — ${count} منتج`}
+                  className={`bento-grid-card group relative overflow-hidden rounded-2xl h-44 sm:h-56 text-right cursor-pointer ${
                     isSelected
-                      ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                      : 'bg-stone-50 hover:bg-rose-50/60 border-stone-200 text-stone-700'
+                      ? 'border-2 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_14px_36px_-8px_rgba(245,158,11,0.45)]'
+                      : 'border border-stone-200 hover:border-amber-400 hover:ring-2 hover:ring-amber-400/35 shadow-sm hover:shadow-[0_12px_32px_-8px_rgba(245,158,11,0.35)]'
                   }`}
                 >
-                  {cat.badge && (
-                    <span
-                      className={`absolute -top-1.5 right-1 text-[9px] font-extrabold px-2 py-0.5 rounded-full shadow-xs ${
-                        isSelected ? 'bg-amber-400 text-stone-900' : 'bg-rose-100 text-rose-700'
-                      }`}
-                    >
-                      {cat.badge}
-                    </span>
+                  {bgImage ? (
+                    <img
+                      src={bgImage}
+                      alt={cat.name_ar}
+                      loading="lazy"
+                      onError={(e) => {
+                        const fallback = resolveCategoryFallbackImage(cat);
+                        const imgEl = e.currentTarget;
+                        if (fallback && imgEl.src !== fallback) {
+                          imgEl.src = fallback;
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full object-cover object-center transition-transform duration-500 ease-out motion-reduce:transition-none"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-stone-800" />
                   )}
+
+                  {/* Enhanced high-contrast dark gradient overlay for optimal readability */}
                   <div
-                    className={`w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center mb-2 transition-transform group-hover:scale-105 border shadow-xs ${
-                      isSelected ? 'border-white/40 bg-white/20' : 'border-stone-200 bg-white'
+                    className={`absolute inset-0 transition-opacity duration-300 ${
+                      isSelected
+                        ? 'bg-gradient-to-t from-stone-950 via-stone-950/80 to-amber-950/45'
+                        : 'bg-gradient-to-t from-stone-950 via-stone-950/75 to-stone-950/30 group-hover:from-stone-950 group-hover:via-stone-950/85 group-hover:to-stone-950/45'
                     }`}
+                  />
+                  {/* Subtle top vignette for crystal-clear top badge & icon contrast */}
+                  <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-stone-950/70 via-stone-950/20 to-transparent pointer-events-none" />
+
+                  {/* Interactive Hover Tooltip */}
+                  <div
+                    role="tooltip"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-2 top-1/2 -translate-y-1/2 z-20 flex justify-center opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all duration-200 ease-out transform -translate-y-1 group-hover:translate-y-0"
                   >
-                    {localImg ? (
-                      <img
-                        src={localImg}
-                        alt={cat.name_ar}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <IconComp
-                        className={`w-6 h-6 ${isSelected ? 'text-white' : 'text-rose-600'}`}
-                      />
-                    )}
+                    <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-stone-950/95 text-white border border-amber-400/60 shadow-[0_12px_32px_rgba(0,0,0,0.85)] backdrop-blur-md text-xs font-bold whitespace-nowrap">
+                      <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="text-white font-extrabold">{cat.name_ar}</span>
+                      <span className="text-white/30">·</span>
+                      <span className="text-amber-300 font-black tabular-nums">{count} {count === 1 ? 'منتج' : 'منتجات'}</span>
+                    </div>
                   </div>
-                  <span className="text-xs font-black line-clamp-1">{cat.name_ar}</span>
-                  <span
-                    className={`text-[10px] font-bold ${
-                      isSelected ? 'text-white/80' : 'text-stone-400'
-                    }`}
-                  >
-                    {count} منتج
-                  </span>
+
+                  {/* Top Selection / Badge Row */}
+                  <div className="relative z-10 h-full p-5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 text-amber-200 flex items-center justify-center">
+                          <IconComp className="w-4 h-4" />
+                        </span>
+                        {cat.badge && (
+                          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-full bg-amber-400/90 text-stone-950 shadow-xs">
+                            {cat.badge}
+                          </span>
+                        )}
+                      </div>
+
+                      <span
+                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                          isSelected
+                            ? 'bg-amber-400 text-stone-950 shadow-md scale-105'
+                            : 'bg-white/15 border border-white/30 text-white/0 group-hover:text-white/80'
+                        }`}
+                      >
+                        <Check className="w-4 h-4 stroke-[3]" />
+                      </span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg sm:text-xl font-black text-white tracking-tight drop-shadow-md">
+                        {cat.name_ar}
+                      </h3>
+                      <div className="mt-1 flex items-center gap-2 text-xs font-bold text-amber-200/95 tabular-nums drop-shadow-sm">
+                        <span>{count} منتج أصلي</span>
+                        <span className="text-white/40">•</span>
+                        <span className="text-white/80 group-hover:text-amber-200 transition-colors">
+                          {isSelected ? 'محدد حالياً' : 'اضغطي للتصفية'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </button>
               );
             })}
           </div>
-        </div>
 
-        {/* Category Filter Pills Bar */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-4 no-scrollbar scroll-smooth">
-          <button
-            onClick={() => handleCategorySelect('all')}
-            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-              selectedCategory === 'all'
-                ? 'bg-rose-600 text-white shadow-md shadow-rose-200'
-                : 'bg-white text-stone-700 hover:bg-stone-100 border border-stone-200'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>الكل</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-600'
-              }`}
-            >
-              {products.length}
-            </span>
-          </button>
+          {/* Second Row: 4 Symmetrical Bento Department Cards */}
+          {restCategories.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 overflow-hidden p-1.5 -m-1.5">
+              {restCategories.map((cat) => {
+                const IconComp = getCategoryIconComponent(cat.icon);
+                const count = countMap.get(cat.id) || 0;
+                const isSelected = selectedCategories.includes(cat.id);
+                const bgImage = resolveCategoryImage(cat);
 
-          {categories.map((cat) => {
-            const IconComp = getCategoryIconComponent(cat.icon);
-            const count = products.filter((p) => p.category_id === cat.id).length;
-            const isSelected = selectedCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => handleToggleCategory(cat.id)}
+                    aria-pressed={isSelected}
+                    title={`${cat.name_ar} — ${count} منتج`}
+                    className={`bento-grid-card group relative overflow-hidden rounded-2xl h-36 sm:h-44 text-right cursor-pointer ${
+                      isSelected
+                        ? 'border-2 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_12px_30px_-8px_rgba(245,158,11,0.45)]'
+                        : 'border border-stone-200 hover:border-amber-400 hover:ring-2 hover:ring-amber-400/35 shadow-xs hover:shadow-[0_10px_28px_-8px_rgba(245,158,11,0.32)]'
+                    }`}
+                  >
+                    {bgImage ? (
+                      <img
+                        src={bgImage}
+                        alt={cat.name_ar}
+                        loading="lazy"
+                        onError={(e) => {
+                          const fallback = resolveCategoryFallbackImage(cat);
+                          const imgEl = e.currentTarget;
+                          if (fallback && imgEl.src !== fallback) {
+                            imgEl.src = fallback;
+                          }
+                        }}
+                        className="absolute inset-0 w-full h-full object-cover object-center transition-transform duration-500 ease-out motion-reduce:transition-none"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 bg-stone-800" />
+                    )}
 
-            return (
-              <button
-                key={cat.id}
-                onClick={() => handleCategorySelect(cat.id)}
-                className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                  isSelected
-                    ? 'bg-rose-600 text-white shadow-md shadow-rose-200'
-                    : 'bg-white text-stone-700 hover:bg-stone-100 border border-stone-200'
-                }`}
-              >
-                <IconComp className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-rose-600'}`} />
-                <span>{cat.name_ar}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                    isSelected ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-600'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                    {/* Enhanced high-contrast dark gradient overlay for optimal readability */}
+                    <div
+                      className={`absolute inset-0 transition-opacity duration-300 ${
+                        isSelected
+                          ? 'bg-gradient-to-t from-stone-950 via-stone-950/80 to-amber-950/45'
+                          : 'bg-gradient-to-t from-stone-950 via-stone-950/75 to-stone-950/30 group-hover:from-stone-950 group-hover:via-stone-950/85 group-hover:to-stone-950/45'
+                      }`}
+                    />
+                    {/* Subtle top vignette for crystal-clear top badge & icon contrast */}
+                    <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-stone-950/70 via-stone-950/20 to-transparent pointer-events-none" />
 
-        {/* Available Tags Bar */}
-        {availableTags.length > 0 && (
+                    {/* Interactive Hover Tooltip */}
+                    <div
+                      role="tooltip"
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-2 top-1/2 -translate-y-1/2 z-20 flex justify-center opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all duration-200 ease-out transform -translate-y-1 group-hover:translate-y-0"
+                    >
+                      <div className="flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-stone-950/95 text-white border border-amber-400/60 shadow-[0_12px_32px_rgba(0,0,0,0.85)] backdrop-blur-md text-[11px] sm:text-xs font-bold whitespace-nowrap">
+                        <Layers className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />
+                        <span className="text-white font-extrabold">{cat.name_ar}</span>
+                        <span className="text-white/30">·</span>
+                        <span className="text-amber-300 font-black tabular-nums">{count} {count === 1 ? 'منتج' : 'منتجات'}</span>
+                      </div>
+                    </div>
+
+                    <div className="relative z-10 h-full p-3.5 sm:p-4 flex flex-col justify-between">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="w-8 h-8 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 text-amber-200 flex items-center justify-center">
+                          <IconComp className="w-4 h-4" />
+                        </span>
+
+                        <span
+                          className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                            isSelected
+                              ? 'bg-amber-400 text-stone-950 shadow-md scale-105'
+                              : 'bg-white/15 border border-white/30 text-white/0 group-hover:text-white/80'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        </span>
+                      </div>
+
+                      <div>
+                        <h3 className="text-sm sm:text-base font-black text-white line-clamp-1 drop-shadow-md">
+                          {cat.name_ar}
+                        </h3>
+                        <p className="text-[11px] font-bold text-amber-200/95 tabular-nums mt-0.5 drop-shadow-sm">
+                          {count} منتج
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Dynamic Sub-Categories Bar (Appears only when 1+ categories are selected, scoped strictly to selected products) */}
+        {selectedCategories.length > 0 && availableSubTags.length > 0 && (
           <div className="bg-white p-3.5 sm:p-4 rounded-3xl border border-stone-200/80 mb-6 shadow-2xs">
-            <div className="flex items-center justify-between gap-2 mb-2 px-1">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-stone-700">
-                <Tag className="w-3.5 h-3.5 text-rose-600" />
-                <span>الوسوم والكلمات المفتاحية ({availableTags.length}):</span>
+            <div className="flex items-center justify-between gap-2 mb-2.5 px-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800">
+                <Tag className="w-3.5 h-3.5 text-amber-600" />
+                <span>تصنيفات فرعية من الأقسام المحددة ({availableSubTags.length}):</span>
               </div>
               {selectedTag !== 'all' && (
                 <button
+                  type="button"
                   onClick={() => setSelectedTag('all')}
                   className="text-[11px] font-semibold text-rose-600 hover:text-rose-700 flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <X className="w-3 h-3" />
-                  <span>إلغاء تصفية الوسم</span>
+                  <span>عرض كل تصنيفات القسم</span>
                 </button>
               )}
             </div>
 
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar scroll-smooth">
               <button
+                type="button"
                 onClick={() => setSelectedTag('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   selectedTag === 'all'
-                    ? 'bg-stone-900 text-white shadow-xs'
-                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200 border border-stone-200/60'
+                    ? 'bg-stone-900 text-amber-300 shadow-xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
-                <span>جميع الوسوم</span>
+                كل التشكيلات
               </button>
 
-              {availableTags.map(({ tag, count }) => {
+              {availableSubTags.map(({ tag, label, count }) => {
                 const isSelected = selectedTag === tag;
-                const displayName = tag.replace(/^#/, '').replace(/_/g, ' ');
-
                 return (
                   <button
                     key={tag}
+                    type="button"
                     onClick={() => setSelectedTag(isSelected ? 'all' : tag)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
                       isSelected
-                        ? 'bg-rose-600 text-white shadow-xs shadow-rose-200 ring-2 ring-rose-300 font-bold'
-                        : 'bg-stone-50 hover:bg-rose-50/70 text-stone-700 hover:text-rose-700 border border-stone-200/70'
+                        ? 'bg-amber-500 text-stone-950 font-extrabold shadow-xs ring-2 ring-amber-300'
+                        : 'bg-stone-50 hover:bg-amber-50 text-stone-700 border border-stone-200/80'
                     }`}
                   >
-                    <Hash className={`w-3 h-3 ${isSelected ? 'text-white' : 'text-rose-500'}`} />
-                    <span>{displayName}</span>
+                    <Hash className={`w-3 h-3 ${isSelected ? 'text-stone-950' : 'text-amber-600'}`} />
+                    <span>{label}</span>
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                        isSelected ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-600'
+                      className={`text-[10px] px-1.5 rounded-full font-bold tabular-nums ${
+                        isSelected ? 'bg-stone-950/15 text-stone-950' : 'bg-stone-200/80 text-stone-600'
                       }`}
                     >
                       {count}
@@ -488,11 +666,14 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
           </div>
         )}
 
-        {/* Search & Sort Controls Bar */}
-        <div className="bg-white p-3.5 sm:p-4 rounded-3xl border border-stone-200/80 mb-8 flex flex-col items-center gap-3 shadow-2xs">
-          <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3">
-            {/* Quick filter input */}
-            <div className="relative w-full sm:w-80">
+        {/* Search, Sort & View Mode Switcher Bar */}
+        <div
+          ref={productsTopRef}
+          className="bg-white p-3.5 sm:p-4 rounded-3xl border border-stone-200/80 mb-8 flex flex-col items-center gap-3 shadow-2xs scroll-mt-24"
+        >
+          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative w-full md:w-80">
               <input
                 type="text"
                 placeholder="تصفية بالكلمة أو الاحتياج..."
@@ -503,26 +684,31 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
               <Search className="w-3.5 h-3.5 text-stone-400 absolute right-2.5 top-3" />
               {activeQuery && (
                 <button
+                  type="button"
                   onClick={() => handleQueryChange('')}
-                  className="absolute left-2.5 top-2.5 text-stone-400 hover:text-stone-700 text-xs"
+                  className="absolute left-2.5 top-2.5 text-stone-400 hover:text-stone-700 text-xs cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            {/* Sort Selector & Count */}
-            <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto text-xs">
-              <span className="text-stone-500 text-xs hidden sm:inline">
+            {/* Right Controls: Product Count + Sort + View Mode Toggle */}
+            <div className="flex flex-wrap items-center justify-between md:justify-end gap-2.5 w-full md:w-auto text-xs">
+              <span className="text-stone-500 text-xs hidden sm:inline tabular-nums">
                 عرض {filteredProducts.length} من {products.length} منتج
-                {activeQuery && ` (مطابقة لـ "${activeQuery}")`}
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <ArrowUpDown className="w-3.5 h-3.5 text-stone-400" />
                 <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
+                  onChange={(e) => {
+                    setSortBy(e.target.value as any);
+                    if (isAllMode && viewMode === 'shelves' && e.target.value !== 'featured') {
+                      setViewMode('grid');
+                    }
+                  }}
                   className="p-2 bg-stone-50 border border-stone-200 rounded-xl focus:outline-hidden focus:border-rose-500 text-xs font-semibold text-stone-800"
                 >
                   <option value="featured">الأكثر طلباً ومميز</option>
@@ -532,33 +718,76 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
                   <option value="discount">أعلى نسبة خصم</option>
                 </select>
               </div>
+
+              {/* Shelves View vs Full Grid Toggle */}
+              <div
+                className="inline-flex items-center bg-stone-100 p-1 rounded-xl border border-stone-200"
+                role="group"
+                aria-label="تبديل طريقة العرض"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('shelves');
+                    if (selectedCategories.length > 0) handleClearSelection();
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    shouldShowShelves
+                      ? 'bg-stone-900 text-amber-300 shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  <Rows3 className="w-3.5 h-3.5" />
+                  <span>عرض الرفوف</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('grid')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    !shouldShowShelves
+                      ? 'bg-stone-900 text-amber-300 shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>العرض الشبكي</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Active Filters Row */}
-          {(selectedCategory !== 'all' || selectedTag !== 'all' || activeQuery) && (
+          {/* Active Multi-Select & Search Filter Chips */}
+          {(selectedCategories.length > 0 || selectedTag !== 'all' || activeQuery) && (
             <div className="w-full flex flex-wrap items-center gap-2 pt-2.5 border-t border-stone-100 text-xs">
               <span className="text-stone-500 font-medium text-[11px] flex items-center gap-1">
-                <Filter className="w-3 h-3 text-rose-600" />
+                <Filter className="w-3 h-3 text-amber-600" />
                 <span>التصفية الحالية:</span>
               </span>
 
-              {selectedCategory !== 'all' && (
-                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border border-rose-200">
-                  قسم: {categories.find((c) => c.id === selectedCategory)?.name_ar || selectedCategory}
-                  <button
-                    onClick={() => handleCategorySelect('all')}
-                    className="hover:text-rose-900 cursor-pointer"
+              {selectedCategories.map((catId) => {
+                const catName = effectiveCategories.find((c) => c.id === catId)?.name_ar || catId;
+                return (
+                  <span
+                    key={catId}
+                    className="inline-flex items-center gap-1 bg-amber-50 text-amber-900 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-amber-300"
                   >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
+                    <span>قسم: {catName}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleCategory(catId)}
+                      className="hover:text-rose-700 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
 
               {selectedTag !== 'all' && (
-                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border border-rose-200">
-                  وسم: #{selectedTag.replace(/^#/, '').replace(/_/g, ' ')}
+                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-rose-200">
+                  تصنيف فرعي: #{selectedTag.replace(/^#/, '').replace(/_/g, ' ')}
                   <button
+                    type="button"
                     onClick={() => setSelectedTag('all')}
                     className="hover:text-rose-900 cursor-pointer"
                   >
@@ -568,9 +797,10 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
               )}
 
               {activeQuery && (
-                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border border-rose-200">
-                  بحث: "{activeQuery}"
+                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-rose-200">
+                  بحث: &quot;{activeQuery}&quot;
                   <button
+                    type="button"
                     onClick={() => handleQueryChange('')}
                     className="hover:text-rose-900 cursor-pointer"
                   >
@@ -580,39 +810,112 @@ export const StoreFront: React.FC<StoreFrontProps> = ({
               )}
 
               <button
+                type="button"
                 onClick={() => {
-                  handleCategorySelect('all');
-                  setSelectedTag('all');
+                  handleClearSelection();
                   handleQueryChange('');
                 }}
-                className="text-stone-400 hover:text-rose-600 text-[11px] underline font-medium mr-auto transition-colors cursor-pointer"
+                className="text-stone-500 hover:text-rose-600 text-[11px] underline font-bold mr-auto transition-colors cursor-pointer"
               >
-                إلغاء كافة الفلاتر
+                مسح التحديد وإلغاء الفلاتر
               </button>
             </div>
           )}
         </div>
 
-        {/* Product Cards Grid */}
+        {/* Display Content: Multi-Shelves View ("الكل") OR Organized Product Grid */}
         {filteredProducts.length === 0 ? (
           <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center max-w-md mx-auto my-8">
             <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto mb-4">
               <Search className="w-8 h-8" />
             </div>
-            <h3 className="font-bold text-stone-800 text-base mb-1">لم نجد أي منتجات تطابق بحثك</h3>
+            <h3 className="font-bold text-stone-800 text-base mb-1">
+              لم نجد أي منتجات تطابق بحثك
+            </h3>
             <p className="text-xs text-stone-500 mb-4">
-              جربي البحث بكلمات أخرى أو تصفح قسم أو وسم آخر من الخيارات المتاحة
+              جربي البحث بكلمات أخرى أو مسح تحديد الأقسام لعرض كامل المتجر
             </p>
             <button
+              type="button"
               onClick={() => {
                 handleQueryChange('');
-                handleCategorySelect('all');
-                setSelectedTag('all');
+                handleClearSelection();
               }}
               className="bg-stone-900 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer"
             >
               عرض كافة المنتجات
             </button>
+          </div>
+        ) : shouldShowShelves ? (
+          <div className="space-y-10">
+            {shelves.map((shelf) => (
+              <section key={shelf.id} aria-label={shelf.title} className="space-y-4">
+                {/* Shelf Header */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-4 rounded-2xl border border-stone-200/80 shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        shelf.kind === 'popular'
+                          ? 'bg-amber-100 text-amber-700'
+                          : shelf.kind === 'offers'
+                            ? 'bg-rose-100 text-rose-700'
+                            : 'bg-stone-100 text-stone-800'
+                      }`}
+                    >
+                      {shelf.kind === 'popular' ? (
+                        <Crown className="w-4 h-4" />
+                      ) : shelf.kind === 'offers' ? (
+                        <Percent className="w-4 h-4" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 text-amber-600" />
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-stone-900">
+                        {shelf.title}
+                      </h3>
+                      <p className="text-[11px] sm:text-xs text-stone-500">{shelf.subtitle}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (shelf.categoryId) {
+                        setSelectedCategories([shelf.categoryId]);
+                        setSelectedTag('all');
+                      } else if (shelf.sortTarget) {
+                        setSortBy(shelf.sortTarget);
+                        setViewMode('grid');
+                      }
+                      scrollToCatalog();
+                    }}
+                    className="text-xs font-extrabold text-stone-800 hover:text-amber-800 bg-stone-100 hover:bg-amber-50 border border-stone-200 hover:border-amber-300 px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <span>عرض الكل</span>
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Shelf Product Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+                  {shelf.products.map((product) => (
+                    <ProductCard
+                      key={`${shelf.id}-${product.id}`}
+                      product={product}
+                      onAddToCart={(p) => onAddToCart(p)}
+                      onQuickView={onQuickView}
+                      onOpenDetails={onOpenDetails}
+                      settings={settings}
+                      isInCart={cartProductIds.has(product.id)}
+                      isWishlisted={wishlistIds.has(product.id)}
+                      onToggleWishlist={onToggleWishlist}
+                      onSelectTag={(tag) => setSelectedTag(tag)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
